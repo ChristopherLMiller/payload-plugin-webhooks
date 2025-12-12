@@ -1,7 +1,7 @@
 {
   "name": "payload-plugin-webhooks",
   "version": "1.0.0",
-  "description": "A blank template to get started with Payload 3.0",
+  "description": "Add webhooks to your Payload CMS collections",
   "license": "MIT",
   "type": "module",
   "exports": {

@@ -1,9 +1,6 @@
-import { BeforeDashboardClient as BeforeDashboardClient_fc6e7dd366b9e2c8ce77d31252122343 } from 'payload-plugin-webhooks/client'
-import { BeforeDashboardServer as BeforeDashboardServer_c4406fcca100b2553312c5a3d7520a3f } from 'payload-plugin-webhooks/rsc'
+import { WebhookCollectionRowLabel as WebhookCollectionRowLabel_fcb2dafdf0f59a6c3a11842622e2d1b2 } from 'payload-plugin-webhooks/client'
 
 export const importMap = {
-  'payload-plugin-webhooks/client#BeforeDashboardClient':
-    BeforeDashboardClient_fc6e7dd366b9e2c8ce77d31252122343,
-  'payload-plugin-webhooks/rsc#BeforeDashboardServer':
-    BeforeDashboardServer_c4406fcca100b2553312c5a3d7520a3f,
+  'payload-plugin-webhooks/client#WebhookCollectionRowLabel':
+    WebhookCollectionRowLabel_fcb2dafdf0f59a6c3a11842622e2d1b2,
 }

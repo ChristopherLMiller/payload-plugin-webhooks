@@ -18,7 +18,8 @@ if (!process.env.ROOT_DIR) {
 }
 
 const buildConfigWithMemoryDB = async () => {
-  if (process.env.NODE_ENV === 'test') {
+  // Use memory database for test or if no DATABASE_URI is provided
+  if (process.env.NODE_ENV === 'test' || !process.env.DATABASE_URI) {
     const memoryDB = await MongoMemoryReplSet.create({
       replSet: {
         count: 3,
@@ -57,13 +58,7 @@ const buildConfigWithMemoryDB = async () => {
     onInit: async (payload) => {
       await seed(payload)
     },
-    plugins: [
-      payloadPluginWebhooks({
-        collections: {
-          posts: true,
-        },
-      }),
-    ],
+    plugins: [payloadPluginWebhooks()],
     secret: process.env.PAYLOAD_SECRET || 'test-secret_key',
     sharp,
     typescript: {

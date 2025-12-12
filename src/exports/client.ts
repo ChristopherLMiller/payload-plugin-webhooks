@@ -1,1 +1,1 @@
-export { BeforeDashboardClient } from '../components/BeforeDashboardClient.js'
+export { WebhookCollectionRowLabel } from '../components/WebhookCollectionRowLabel.js'
