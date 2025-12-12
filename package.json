@@ -1,6 +1,6 @@
 {
   "name": "payload-plugin-webhooks",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Add webhooks to your Payload CMS collections",
   "license": "MIT",
   "type": "module",
