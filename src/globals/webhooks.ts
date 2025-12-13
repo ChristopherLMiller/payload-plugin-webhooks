@@ -8,6 +8,7 @@ export const WebhooksGlobal: GlobalConfig = {
   },
   admin: {
     description: 'Configure which collections and CRUD operations should emit webhook events.',
+    group: 'Webhooks',
   },
   fields: [
     {

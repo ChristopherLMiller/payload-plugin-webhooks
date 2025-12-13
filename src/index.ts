@@ -1,6 +1,7 @@
-import type { Config } from 'payload'
+import type { Access, Config } from 'payload'
 
-import { webhookStreamHandler } from './endpoints/webhookStream.js'
+import { ApiKeys } from './collections/apiKeys.js'
+import { createWebhookStreamHandler } from './endpoints/webhookStream.js'
 import { WebhooksGlobal } from './globals/webhooks.js'
 import { emitWebhookEvent } from './hooks/webhookHandler.js'
 
@@ -9,6 +10,29 @@ export type PayloadPluginWebhooksConfig = {
    * Disable the plugin
    */
   disabled?: boolean
+  /**
+   * Access control for the webhooks global configuration
+   */
+  access?: {
+    /**
+     * Control who can read webhook configuration
+     * @default () => true - Anyone can read
+     */
+    read?: Access
+    /**
+     * Control who can create/update webhook configuration
+     * @default ({ req }) => !!req.user - Only authenticated users
+     */
+    update?: Access
+  }
+  /**
+   * Custom authentication check for the webhook stream endpoint
+   * If provided, this function will be called to determine if a user can connect to the stream
+   * If not provided, defaults to requiring an authenticated user (req.user exists)
+   * @param req - The Payload request object
+   * @returns true to allow access, false to deny with 401
+   */
+  streamAuth?: (req: any) => boolean | Promise<boolean>
 }
 
 export const payloadPluginWebhooks =
@@ -96,8 +120,14 @@ export const payloadPluginWebhooks =
       config.globals = []
     }
 
-    // Populate collection select options dynamically
-    const webhooksGlobal = { ...WebhooksGlobal }
+    // Populate collection select options dynamically and apply access control
+    const webhooksGlobal = {
+      ...WebhooksGlobal,
+      access: {
+        read: pluginOptions.access?.read || (() => true),
+        update: pluginOptions.access?.update || (({ req }) => !!req.user),
+      },
+    }
     if (webhooksGlobal.fields && config.collections) {
       for (const field of webhooksGlobal.fields) {
         if (
@@ -139,13 +169,19 @@ export const payloadPluginWebhooks =
 
     config.globals.push(webhooksGlobal)
 
+    // Add API keys collection
+    if (!config.collections) {
+      config.collections = []
+    }
+    config.collections.push(ApiKeys)
+
     if (!config.endpoints) {
       config.endpoints = []
     }
 
     // Add webhook stream endpoint for clients to listen to CRUD events
     config.endpoints.push({
-      handler: webhookStreamHandler,
+      handler: createWebhookStreamHandler(pluginOptions.streamAuth),
       method: 'get',
       path: '/webhooks/stream',
     })

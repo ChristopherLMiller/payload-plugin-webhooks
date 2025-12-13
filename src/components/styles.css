@@ -1,0 +1,46 @@
+.api-key-field-wrapper {
+  width: 100%;
+}
+
+.api-key-input-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.api-key-input {
+  width: 100%;
+  font-family: monospace;
+  padding-right: 40px;
+  letter-spacing: 1px;
+}
+
+.api-key-toggle-visibility {
+  position: absolute;
+  right: 8px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--theme-elevation-500, #999);
+  transition: color 0.2s ease;
+}
+
+.api-key-toggle-visibility:hover {
+  color: var(--theme-elevation-900, #333);
+}
+
+.api-key-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.generate-key-btn,
+.copy-key-btn {
+  white-space: nowrap;
+}

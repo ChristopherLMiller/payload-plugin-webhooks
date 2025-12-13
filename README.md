@@ -1,220 +1,393 @@
-# Payload Plugin Template
+# Payload Plugin Webhooks
 
-A template repo to create a [Payload CMS](https://payloadcms.com) plugin.
+A real-time webhook event streaming plugin for [Payload CMS](https://payloadcms.com) v3.
 
-Payload is built with a robust infrastructure intended to support Plugins with ease. This provides a simple, modular, and reusable way for developers to extend the core capabilities of Payload.
+This plugin provides Server-Sent Events (SSE) based streaming of CRUD operations across your Payload collections, allowing clients to receive real-time updates when documents are created, updated, deleted, or read.
 
-To build your own Payload plugin, all you need is:
+## Features
 
-- An understanding of the basic Payload concepts
-- And some JavaScript/Typescript experience
+- 🔄 Real-time SSE streaming of CRUD operations
+- 🔐 Built-in authentication for stream connections
+- 🔑 API Keys collection for managing webhook stream access
+- 🎛️ Configurable access control for webhook management
+- ⚙️ Per-collection and per-operation event configuration
+- 🔌 Easy integration with existing Payload projects
+- 🛡️ Secure by default with customizable authentication
 
-## Background
+## Installation
 
-Here is a short recap on how to integrate plugins with Payload, to learn more visit the [plugin overview page](https://payloadcms.com/docs/plugins/overview).
+```bash
+npm install payload-plugin-webhooks
+# or
+yarn add payload-plugin-webhooks
+# or
+pnpm add payload-plugin-webhooks
+```
 
-### How to install a plugin
+## Basic Usage
 
-To install any plugin, simply add it to your payload.config() in the Plugin array.
+Add the plugin to your `payload.config.ts`:
 
 ```ts
-import myPlugin from 'my-plugin'
+import { payloadPluginWebhooks } from 'payload-plugin-webhooks'
 
-export const config = buildConfig({
+export default buildConfig({
   plugins: [
-    // You can pass options to the plugin
-    myPlugin({
-      enabled: true,
+    payloadPluginWebhooks({
+      // Plugin options
     }),
   ],
 })
 ```
 
-### Initialization
+## Configuration
 
-The initialization process goes in the following order:
-
-1. Incoming config is validated
-2. **Plugins execute**
-3. Default options are integrated
-4. Sanitization cleans and validates data
-5. Final config gets initialized
-
-## Building the Plugin
-
-When you build a plugin, you are purely building a feature for your project and then abstracting it outside of the project.
-
-### Template Files
-
-In the Payload [plugin template](https://github.com/payloadcms/payload/tree/main/templates/plugin), you will see a common file structure that is used across all plugins:
-
-1. root folder
-2. /src folder
-3. /dev folder
-
-#### Root
-
-In the root folder, you will see various files that relate to the configuration of the plugin. We set up our environment in a similar manner in Payload core and across other projects, so hopefully these will look familiar:
-
-- **README**.md\* - This contains instructions on how to use the template. When you are ready, update this to contain instructions on how to use your Plugin.
-- **package**.json\* - Contains necessary scripts and dependencies. Overwrite the metadata in this file to describe your Plugin.
-- .**eslint**.config.js - Eslint configuration for reporting on problematic patterns.
-- .**gitignore** - List specific untracked files to omit from Git.
-- .**prettierrc**.json - Configuration for Prettier code formatting.
-- **tsconfig**.json - Configures the compiler options for TypeScript
-- .**swcrc** - Configuration for SWC, a fast compiler that transpiles and bundles TypeScript.
-- **vitest**.config.js - Config file for Vitest, defining how tests are run and how modules are resolved
-
-**IMPORTANT\***: You will need to modify these files.
-
-#### Dev
-
-In the dev folder, you’ll find a basic payload project, created with `npx create-payload-app` and the blank template.
-
-**IMPORTANT**: Make a copy of the `.env.example` file and rename it to `.env`. Update the `DATABASE_URI` to match the database you are using and your plugin name. Update `PAYLOAD_SECRET` to a unique string.
-**You will not be able to run `pnpm/yarn dev` until you have created this `.env` file.**
-
-`myPlugin` has already been added to the `payload.config()` file in this project.
+### Plugin Options
 
 ```ts
-plugins: [
-  myPlugin({
-    collections: {
-      posts: true,
-    },
-  }),
-]
-```
-
-Later when you rename the plugin or add additional options, **make sure to update it here**.
-
-You may wish to add collections or expand the test project depending on the purpose of your plugin. Just make sure to keep this dev environment as simplified as possible - users should be able to install your plugin without additional configuration required.
-
-When you’re ready to start development, initiate the project with `pnpm/npm/yarn dev` and pull up [http://localhost:3000](http://localhost:3000) in your browser.
-
-#### Src
-
-Now that we have our environment setup and we have a dev project ready to - it’s time to build the plugin!
-
-**index.ts**
-
-The essence of a Payload plugin is simply to extend the payload config - and that is exactly what we are doing in this file.
-
-```ts
-export const myPlugin =
-  (pluginOptions: MyPluginConfig) =>
-  (config: Config): Config => {
-    // do cool stuff with the config here
-
-    return config
-  }
-```
-
-First, we receive the existing payload config along with any plugin options.
-
-From here, you can extend the config as you wish.
-
-Finally, you return the config and that is it!
-
-##### Spread Syntax
-
-Spread syntax (or the spread operator) is a feature in JavaScript that uses the dot notation **(...)** to spread elements from arrays, strings, or objects into various contexts.
-
-We are going to use spread syntax to allow us to add data to existing arrays without losing the existing data. It is crucial to spread the existing data correctly – else this can cause adverse behavior and conflicts with Payload config and other plugins.
-
-Let’s say you want to build a plugin that adds a new collection:
-
-```ts
-config.collections = [
-  ...(config.collections || []),
-  // Add additional collections here
-]
-```
-
-First we spread the `config.collections` to ensure that we don’t lose the existing collections, then you can add any additional collections just as you would in a regular payload config.
-
-This same logic is applied to other properties like admin, hooks, globals:
-
-```ts
-config.globals = [
-  ...(config.globals || []),
-  // Add additional globals here
-]
-
-config.hooks = {
-  ...(incomingConfig.hooks || {}),
-  // Add additional hooks here
-}
-```
-
-Some properties will be slightly different to extend, for instance the onInit property:
-
-```ts
-import { onInitExtension } from './onInitExtension' // example file
-
-config.onInit = async (payload) => {
-  if (incomingConfig.onInit) await incomingConfig.onInit(payload)
-  // Add additional onInit code by defining an onInitExtension function
-  onInitExtension(pluginOptions, payload)
-}
-```
-
-If you wish to add to the onInit, you must include the **async/await**. We don’t use spread syntax in this case, instead you must await the existing `onInit` before running additional functionality.
-
-In the template, we have stubbed out some addition `onInit` actions that seeds in a document to the `plugin-collection`, you can use this as a base point to add more actions - and if not needed, feel free to delete it.
-
-##### Types.ts
-
-If your plugin has options, you should define and provide types for these options.
-
-```ts
-export type MyPluginConfig = {
-  /**
-   * List of collections to add a custom field
-   */
-  collections?: Partial<Record<CollectionSlug, true>>
+type PayloadPluginWebhooksConfig = {
   /**
    * Disable the plugin
+   * @default false
    */
   disabled?: boolean
+
+  /**
+   * Access control for the webhooks global configuration
+   */
+  access?: {
+    /**
+     * Control who can read webhook configuration
+     * @default () => true - Anyone can read
+     */
+    read?: Access
+
+    /**
+     * Control who can create/update webhook configuration
+     * @default ({ req }) => !!req.user - Only authenticated users
+     */
+    update?: Access
+  }
+
+  /**
+   * Custom authentication check for the webhook stream endpoint
+   * If provided, this function will be called to determine if a user can connect to the stream
+   * If not provided, defaults to requiring an authenticated user (req.user exists)
+   * @param req - The Payload request object
+   * @returns true to allow access, false to deny with 401
+   */
+  streamAuth?: (req: any) => boolean | Promise<boolean>
 }
 ```
 
-If possible, include JSDoc comments to describe the options and their types. This allows a developer to see details about the options in their editor.
-
-##### Testing
-
-Having a test suite for your plugin is essential to ensure quality and stability. **Vitest** is a fast, modern testing framework that works seamlessly with Vite and supports TypeScript out of the box.
-
-Vitest organizes tests into test suites and cases, similar to other testing frameworks. We recommend creating individual tests based on the expected behavior of your plugin from start to finish.
-
-Writing tests with Vitest is very straightforward, and you can learn more about how it works in the [Vitest documentation.](https://vitest.dev/)
-
-For this template, we stubbed out `int.spec.ts` in the `dev` folder where you can write your tests.
+### Example: Basic Configuration
 
 ```ts
-describe('Plugin tests', () => {
-  // Create tests to ensure expected behavior from the plugin
-  it('some condition that must be met', () => {
-   // Write your test logic here
-   expect(...)
-  })
+import { payloadPluginWebhooks } from 'payload-plugin-webhooks'
+
+export default buildConfig({
+  plugins: [
+    payloadPluginWebhooks({
+      // Use default authentication (requires logged-in user)
+    }),
+  ],
 })
 ```
 
-## Best practices
+### Example: Custom Access Control
 
-With this tutorial and the plugin template, you should have everything you need to start building your own plugin.
-In addition to the setup, here are other best practices aim we follow:
+```ts
+import { payloadPluginWebhooks } from 'payload-plugin-webhooks'
 
-- **Providing an enable / disable option:** For a better user experience, provide a way to disable the plugin without uninstalling it. This is especially important if your plugin adds additional webpack aliases, this will allow you to still let the webpack run to prevent errors.
-- **Include tests in your GitHub CI workflow**: If you’ve configured tests for your package, integrate them into your workflow to run the tests each time you commit to the plugin repository. Learn more about [how to configure tests into your GitHub CI workflow.](https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-nodejs)
-- **Publish your finished plugin to NPM**: The best way to share and allow others to use your plugin once it is complete is to publish an NPM package. This process is straightforward and well documented, find out more [creating and publishing a NPM package here.](https://docs.npmjs.com/creating-and-publishing-scoped-public-packages/).
-- **Add payload-plugin topic tag**: Apply the tag **payload-plugin **to your GitHub repository. This will boost the visibility of your plugin and ensure it gets listed with [existing payload plugins](https://github.com/topics/payload-plugin).
-- **Use [Semantic Versioning](https://semver.org/) (SemVar)** - With the SemVar system you release version numbers that reflect the nature of changes (major, minor, patch). Ensure all major versions reference their Payload compatibility.
+export default buildConfig({
+  plugins: [
+    payloadPluginWebhooks({
+      access: {
+        // Only admins can read webhook configuration
+        read: ({ req }) => req.user?.role === 'admin',
+        // Only superadmins can update webhook configuration
+        update: ({ req }) => req.user?.role === 'superadmin',
+      },
+    }),
+  ],
+})
+```
 
-# Questions
+### Example: API Key Authentication
 
-Please contact [Payload](mailto:dev@payloadcms.com) with any questions about using this plugin template.
-# payload-plugin-webhooks
-# payload-plugin-webhooks
+```ts
+import { payloadPluginWebhooks } from 'payload-plugin-webhooks'
+
+export default buildConfig({
+  plugins: [
+    payloadPluginWebhooks({
+      // Validate API keys from the api-keys collection
+      streamAuth: async (req) => {
+        const apiKey = req.headers.get('x-api-key')
+
+        if (!apiKey) {
+          return false
+        }
+
+        try {
+          // Query the api-keys collection for a matching active key
+          const result = await req.payload.find({
+            collection: 'api-keys',
+            where: {
+              key: { equals: apiKey },
+              active: { equals: true }
+            },
+            limit: 1
+          })
+
+          // If found, update lastUsed and grant access
+          if (result.docs.length > 0) {
+            await req.payload.update({
+              collection: 'api-keys',
+              id: result.docs[0].id,
+              data: { lastUsed: new Date().toISOString() }
+            })
+            return true
+          }
+
+          return false
+        } catch (error) {
+          console.error('Error validating API key:', error)
+          return false
+        }
+      },
+    }),
+  ],
+})
+```
+
+## Managing Webhook Configuration
+
+Once the plugin is installed, a new **Webhooks** group will appear in your Payload admin panel containing:
+- **Webhooks** global configuration
+- **API Keys** collection for managing stream access
+
+### Configuring Collections
+
+1. Navigate to **Globals** → **Webhooks** in the admin panel
+2. Add collections you want to monitor
+3. For each collection, configure:
+   - **Enabled**: Toggle to enable/disable webhooks for this collection
+   - **Operations**: Select which CRUD operations should emit events:
+     - **Create**: Emit events when documents are created
+     - **Read**: Emit events when documents are read (disabled by default)
+     - **Update**: Emit events when documents are updated
+     - **Delete**: Emit events when documents are deleted
+
+### Managing API Keys
+
+The plugin includes an **API Keys** collection for managing webhook stream authentication:
+
+1. Navigate to **Collections** → **API Keys** in the admin panel
+2. Create a new API key:
+   - Select the user this key belongs to (defaults to current user)
+   - Click **Generate Key** to create a strong random API key
+   - Click **Copy to Clipboard** to copy the key
+   - Use the eye icon to show/hide the key value
+3. Each user can only have one API key at a time
+4. Keys can be temporarily disabled using the **Active** checkbox
+5. The **Last Used** timestamp tracks when the key was last used
+
+**Security Features:**
+- Keys are obfuscated in list view (shown as •••••••••••••••••)
+- Keys are hidden by default in edit view with a show/hide toggle
+- Strong 256-bit randomly generated keys
+- One key per user restriction
+- Active/inactive status control
+- Usage tracking with lastUsed timestamp
+
+## Connecting to the Webhook Stream
+
+The plugin exposes a Server-Sent Events (SSE) endpoint at `/api/webhooks/stream`.
+
+### Authentication
+
+**By default, the stream endpoint requires an authenticated user.** You must include authentication credentials (session cookie or JWT token) when connecting to the stream.
+
+### Client Example (JavaScript)
+
+```ts
+// Connect to the webhook stream with authentication
+const eventSource = new EventSource('/api/webhooks/stream', {
+  withCredentials: true, // Include cookies for session authentication
+})
+
+// Listen for webhook events
+eventSource.addEventListener('message', (event) => {
+  const data = JSON.parse(event.data)
+
+  if (data.type === 'connected') {
+    console.log('Connected to webhook stream')
+    return
+  }
+
+  // Handle webhook events
+  console.log('Webhook event:', data)
+  // {
+  //   action: 'create' | 'update' | 'delete' | 'read',
+  //   collection: 'posts',
+  //   data: { ... },
+  //   id: '123',
+  //   timestamp: '2024-01-01T00:00:00.000Z'
+  // }
+})
+
+eventSource.addEventListener('error', (error) => {
+  console.error('Stream error:', error)
+})
+```
+
+### Client Example (with API Key)
+
+If you've configured custom `streamAuth` to accept API keys:
+
+```ts
+// Using fetch to add custom headers
+const response = await fetch('/api/webhooks/stream', {
+  headers: {
+    'X-API-Key': 'your-api-key',
+  },
+})
+
+const reader = response.body.getReader()
+const decoder = new TextDecoder()
+
+while (true) {
+  const { done, value } = await reader.read()
+  if (done) break
+
+  const chunk = decoder.decode(value)
+  const lines = chunk.split('\n')
+
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const data = JSON.parse(line.slice(6))
+      console.log('Webhook event:', data)
+    }
+  }
+}
+```
+
+## Webhook Event Structure
+
+All webhook events follow this structure:
+
+```ts
+type WebhookPayload = {
+  action: 'create' | 'delete' | 'read' | 'update'
+  collection: string
+  data?: unknown // The document data
+  id?: number | string // The document ID
+  previousData?: unknown // Previous data (for update operations only)
+  timestamp: string // ISO 8601 timestamp
+}
+```
+
+## Security
+
+### Default Security
+
+- **Stream Authentication**: By default, only authenticated users can connect to the webhook stream
+- **Configuration Access**: By default, only authenticated users can modify webhook configuration
+- **Read Access**: By default, anyone can read webhook configuration (useful for debugging)
+
+### Customizing Security
+
+You can customize security using the plugin options:
+
+```ts
+payloadPluginWebhooks({
+  // Customize who can read/update webhook configuration
+  access: {
+    read: ({ req }) => req.user?.role === 'admin',
+    update: ({ req }) => req.user?.role === 'superadmin',
+  },
+
+  // Customize stream authentication
+  streamAuth: async (req) => {
+    // Your custom authentication logic
+    return true // or false
+  },
+})
+```
+
+## Development
+
+To develop and test this plugin locally:
+
+```bash
+# Install dependencies
+pnpm install
+
+# Start development server
+pnpm dev
+
+# Build the plugin
+pnpm build
+
+# Run tests
+pnpm test
+```
+
+The `dev` folder contains a test Payload project where you can develop and test the plugin.
+
+## How It Works
+
+1. **Global Configuration**: The plugin adds a `webhooks` global to your Payload config where you can configure which collections and operations should emit webhook events.
+
+2. **Hooks Integration**: The plugin automatically adds `afterChange`, `afterDelete`, and `afterRead` hooks to all your collections to emit webhook events.
+
+3. **Event Emitter**: Events are broadcast using a singleton EventEmitter that maintains the stream of webhook events.
+
+4. **SSE Endpoint**: The `/api/webhooks/stream` endpoint uses Server-Sent Events to push webhook events to connected clients in real-time.
+
+5. **Authentication**: By default, the stream endpoint checks for `req.user` to ensure only authenticated users can connect. This can be customized via the `streamAuth` option.
+
+## Use Cases
+
+- **Real-time dashboards**: Update dashboards in real-time when data changes
+- **Audit logging**: Track all CRUD operations across your collections
+- **Synchronization**: Keep external systems in sync with Payload data
+- **Notifications**: Trigger notifications when specific events occur
+- **Analytics**: Monitor user activity and data changes in real-time
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+### Development Workflow
+
+This project uses [Changesets](https://github.com/changesets/changesets) for version management and changelog generation.
+
+When making changes:
+
+1. Make your changes
+2. Create a changeset:
+   ```bash
+   pnpm changeset
+   ```
+3. Follow the prompts to describe your changes
+4. Commit the changeset file along with your changes
+
+### Releasing
+
+To release a new version:
+
+1. Update versions and generate changelog:
+   ```bash
+   pnpm version
+   ```
+2. Review the changes and commit
+3. Publish to npm:
+   ```bash
+   pnpm release
+   ```

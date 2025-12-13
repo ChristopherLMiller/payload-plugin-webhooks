@@ -2,7 +2,25 @@ import type { PayloadHandler } from 'payload'
 
 import { webhookEventEmitter, type WebhookPayload } from '../hooks/webhookEventEmitter.js'
 
-export const webhookStreamHandler: PayloadHandler = (req) => {
+/**
+ * Factory function to create a webhook stream handler with custom authentication
+ */
+export const createWebhookStreamHandler = (
+  streamAuth?: (req: any) => boolean | Promise<boolean>,
+): PayloadHandler => {
+  return async (req) => {
+    // Authentication check - use custom auth or default to requiring authenticated user
+    const authCheck = streamAuth ? await streamAuth(req) : !!req.user
+
+    if (!authCheck) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+    }
+
   // Set up Server-Sent Events headers
   const headers = new Headers({
     'Cache-Control': 'no-cache',
@@ -90,5 +108,6 @@ export const webhookStreamHandler: PayloadHandler = (req) => {
     },
   })
 
-  return new Response(stream, { headers })
+    return new Response(stream, { headers })
+  }
 }
