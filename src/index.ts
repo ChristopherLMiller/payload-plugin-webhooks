@@ -1,15 +1,14 @@
 import type { Access, Config } from 'payload'
 
-import { ApiKeys } from './collections/apiKeys.js'
+import type { StreamAuth } from './auth/defaultStreamAuth.js'
+
 import { createWebhookStreamHandler } from './endpoints/webhookStream.js'
 import { WebhooksGlobal } from './globals/webhooks.js'
 import { emitWebhookEvent } from './hooks/webhookHandler.js'
 
+export type { StreamAuth } from './auth/defaultStreamAuth.js'
+
 export type PayloadPluginWebhooksConfig = {
-  /**
-   * Disable the plugin
-   */
-  disabled?: boolean
   /**
    * Access control for the webhooks global configuration
    */
@@ -26,13 +25,16 @@ export type PayloadPluginWebhooksConfig = {
     update?: Access
   }
   /**
-   * Custom authentication check for the webhook stream endpoint
-   * If provided, this function will be called to determine if a user can connect to the stream
-   * If not provided, defaults to requiring an authenticated user (req.user exists)
-   * @param req - The Payload request object
-   * @returns true to allow access, false to deny with 401
+   * Disable the plugin
    */
-  streamAuth?: (req: any) => boolean | Promise<boolean>
+  disabled?: boolean
+  /**
+   * Custom authentication check for the webhook stream endpoint.
+   * If omitted, the stream accepts any request already authenticated by the host app:
+   * session cookies, JWT, Payload native API keys (`auth.useAPIKey`), Better Auth,
+   * and any other registered auth strategies.
+   */
+  streamAuth?: StreamAuth
 }
 
 export const payloadPluginWebhooks =
@@ -168,12 +170,6 @@ export const payloadPluginWebhooks =
     }
 
     config.globals.push(webhooksGlobal)
-
-    // Add API keys collection
-    if (!config.collections) {
-      config.collections = []
-    }
-    config.collections.push(ApiKeys)
 
     if (!config.endpoints) {
       config.endpoints = []

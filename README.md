@@ -7,8 +7,7 @@ This plugin provides Server-Sent Events (SSE) based streaming of CRUD operations
 ## Features
 
 - 🔄 Real-time SSE streaming of CRUD operations
-- 🔐 Built-in authentication for stream connections
-- 🔑 API Keys collection for managing webhook stream access
+- 🔐 Stream auth via the host app (session, JWT, Payload API keys, Better Auth)
 - 🎛️ Configurable access control for webhook management
 - ⚙️ Per-collection and per-operation event configuration
 - 🔌 Easy integration with existing Payload projects
@@ -45,13 +44,10 @@ export default buildConfig({
 ### Plugin Options
 
 ```ts
-type PayloadPluginWebhooksConfig = {
-  /**
-   * Disable the plugin
-   * @default false
-   */
-  disabled?: boolean
+import type { Access } from 'payload'
+import type { StreamAuth } from 'payload-plugin-webhooks'
 
+type PayloadPluginWebhooksConfig = {
   /**
    * Access control for the webhooks global configuration
    */
@@ -70,13 +66,17 @@ type PayloadPluginWebhooksConfig = {
   }
 
   /**
-   * Custom authentication check for the webhook stream endpoint
-   * If provided, this function will be called to determine if a user can connect to the stream
-   * If not provided, defaults to requiring an authenticated user (req.user exists)
-   * @param req - The Payload request object
-   * @returns true to allow access, false to deny with 401
+   * Disable the plugin
+   * @default false
    */
-  streamAuth?: (req: any) => boolean | Promise<boolean>
+  disabled?: boolean
+
+  /**
+   * Custom authentication check for the webhook stream endpoint.
+   * If omitted, the stream accepts any request already authenticated by the host app
+   * (session cookies, JWT, Payload native API keys, Better Auth, custom strategies).
+   */
+  streamAuth?: StreamAuth
 }
 ```
 
@@ -88,7 +88,7 @@ import { payloadPluginWebhooks } from 'payload-plugin-webhooks'
 export default buildConfig({
   plugins: [
     payloadPluginWebhooks({
-      // Use default authentication (requires logged-in user)
+      // Use host-app auth (session, JWT, Payload API keys, Better Auth)
     }),
   ],
 })
@@ -113,59 +113,66 @@ export default buildConfig({
 })
 ```
 
-### Example: API Key Authentication
+### Stream authentication
+
+This plugin does **not** ship its own API key collection. The stream uses whatever auth the host Payload app already has.
+
+If `req.user` is already set, the connection is allowed. Otherwise the plugin calls `payload.auth()`, which runs every registered strategy:
+
+| Method | How to send it |
+| --- | --- |
+| Session cookie | `EventSource(..., { withCredentials: true })` |
+| JWT | `Authorization: JWT <token>` |
+| Payload native API key | `Authorization: users API-Key <key>` |
+| Better Auth API key | `x-api-key: <key>` or `Authorization: Bearer <key>` |
+
+#### Payload native API keys
+
+Enable Payload's built-in keys on an auth collection:
 
 ```ts
-import { payloadPluginWebhooks } from 'payload-plugin-webhooks'
+import type { CollectionConfig } from 'payload'
 
-export default buildConfig({
-  plugins: [
-    payloadPluginWebhooks({
-      // Validate API keys from the api-keys collection
-      streamAuth: async (req) => {
-        const apiKey = req.headers.get('x-api-key')
+export const Users: CollectionConfig = {
+  slug: 'users',
+  auth: {
+    useAPIKey: true,
+  },
+  fields: [],
+}
+```
 
-        if (!apiKey) {
-          return false
-        }
+Generate a key on the user in the admin UI, then send:
 
-        try {
-          // Query the api-keys collection for a matching active key
-          const result = await req.payload.find({
-            collection: 'api-keys',
-            where: {
-              key: { equals: apiKey },
-              active: { equals: true }
-            },
-            limit: 1
-          })
+```http
+Authorization: users API-Key <key>
+```
 
-          // If found, update lastUsed and grant access
-          if (result.docs.length > 0) {
-            await req.payload.update({
-              collection: 'api-keys',
-              id: result.docs[0].id,
-              data: { lastUsed: new Date().toISOString() }
-            })
-            return true
-          }
+#### Better Auth
 
-          return false
-        } catch (error) {
-          console.error('Error validating API key:', error)
-          return false
-        }
-      },
-    }),
-  ],
+If you use Better Auth (`@delmaredigital/payload-better-auth`, `payload-auth`, etc.), keep API keys in that plugin. When it registers a Payload auth strategy, a valid key populates `req.user` and the stream accepts it with no extra plugin config.
+
+#### Custom `streamAuth`
+
+Override only if you need a stricter check than "is this request authenticated?":
+
+```ts
+payloadPluginWebhooks({
+  streamAuth: async (req) => req.user?.role === 'admin',
 })
 ```
 
+### Migrating from the plugin `api-keys` collection
+
+v1.1.x added a plugin-owned `api-keys` collection. That store is gone. After upgrading:
+
+1. Stop sending `X-API-Key` against that collection.
+2. Enable Payload `auth.useAPIKey` on your users (or keep using Better Auth keys).
+3. Drop the leftover `api-keys` collection from your database if it exists.
+
 ## Managing Webhook Configuration
 
-Once the plugin is installed, a new **Webhooks** group will appear in your Payload admin panel containing:
-- **Webhooks** global configuration
-- **API Keys** collection for managing stream access
+Once the plugin is installed, a **Webhooks** global will appear in your Payload admin panel.
 
 ### Configuring Collections
 
@@ -179,35 +186,13 @@ Once the plugin is installed, a new **Webhooks** group will appear in your Paylo
      - **Update**: Emit events when documents are updated
      - **Delete**: Emit events when documents are deleted
 
-### Managing API Keys
-
-The plugin includes an **API Keys** collection for managing webhook stream authentication:
-
-1. Navigate to **Collections** → **API Keys** in the admin panel
-2. Create a new API key:
-   - Select the user this key belongs to (defaults to current user)
-   - Click **Generate Key** to create a strong random API key
-   - Click **Copy to Clipboard** to copy the key
-   - Use the eye icon to show/hide the key value
-3. Each user can only have one API key at a time
-4. Keys can be temporarily disabled using the **Active** checkbox
-5. The **Last Used** timestamp tracks when the key was last used
-
-**Security Features:**
-- Keys are obfuscated in list view (shown as •••••••••••••••••)
-- Keys are hidden by default in edit view with a show/hide toggle
-- Strong 256-bit randomly generated keys
-- One key per user restriction
-- Active/inactive status control
-- Usage tracking with lastUsed timestamp
-
 ## Connecting to the Webhook Stream
 
 The plugin exposes a Server-Sent Events (SSE) endpoint at `/api/webhooks/stream`.
 
 ### Authentication
 
-**By default, the stream endpoint requires an authenticated user.** You must include authentication credentials (session cookie or JWT token) when connecting to the stream.
+The stream endpoint requires an authenticated request. Browser clients can send the session cookie; machine clients can send a JWT or API key header.
 
 ### Client Example (JavaScript)
 
@@ -242,15 +227,17 @@ eventSource.addEventListener('error', (error) => {
 })
 ```
 
-### Client Example (with API Key)
+### Client Example (API key)
 
-If you've configured custom `streamAuth` to accept API keys:
+`EventSource` cannot set custom headers. Use `fetch` for Payload native keys or Better Auth keys:
 
 ```ts
-// Using fetch to add custom headers
 const response = await fetch('/api/webhooks/stream', {
   headers: {
-    'X-API-Key': 'your-api-key',
+    // Payload native API keys:
+    Authorization: 'users API-Key your-api-key',
+    // Better Auth (if that plugin's strategy is registered):
+    // 'x-api-key': 'your-api-key',
   },
 })
 
@@ -292,7 +279,7 @@ type WebhookPayload = {
 
 ### Default Security
 
-- **Stream Authentication**: By default, only authenticated users can connect to the webhook stream
+- **Stream Authentication**: By default, only requests authenticated by the host app (session, JWT, Payload API keys, Better Auth) can connect
 - **Configuration Access**: By default, only authenticated users can modify webhook configuration
 - **Read Access**: By default, anyone can read webhook configuration (useful for debugging)
 
@@ -346,7 +333,7 @@ The `dev` folder contains a test Payload project where you can develop and test 
 
 4. **SSE Endpoint**: The `/api/webhooks/stream` endpoint uses Server-Sent Events to push webhook events to connected clients in real-time.
 
-5. **Authentication**: By default, the stream endpoint checks for `req.user` to ensure only authenticated users can connect. This can be customized via the `streamAuth` option.
+5. **Authentication**: By default, the stream endpoint accepts any request authenticated by the host app (`req.user` or `payload.auth()`). Override with `streamAuth` if needed.
 
 ## Use Cases
 

@@ -38,6 +38,13 @@ const buildConfigWithMemoryDB = async () => {
     },
     collections: [
       {
+        slug: 'users',
+        auth: {
+          useAPIKey: true,
+        },
+        fields: [],
+      },
+      {
         slug: 'posts',
         fields: [],
       },
@@ -58,54 +65,7 @@ const buildConfigWithMemoryDB = async () => {
     onInit: async (payload) => {
       await seed(payload)
     },
-    plugins: [
-      payloadPluginWebhooks({
-        streamAuth: async (req) => {
-          const apiKey = req.headers.get('x-api-key')
-
-          if (!apiKey) {
-            return false
-          }
-
-          try {
-            // Query the api-keys collection for a matching key
-            const result = await req.payload.find({
-              collection: 'api-keys',
-              where: {
-                key: {
-                  equals: apiKey,
-                },
-                active: {
-                  equals: true,
-                },
-              },
-              limit: 1,
-            })
-
-            // If we found a matching active key, update lastUsed and allow access
-            if (result.docs.length > 0) {
-              const keyDoc = result.docs[0]
-
-              // Update the lastUsed timestamp
-              await req.payload.update({
-                collection: 'api-keys',
-                id: keyDoc.id,
-                data: {
-                  lastUsed: new Date().toISOString(),
-                },
-              })
-
-              return true
-            }
-
-            return false
-          } catch (error) {
-            console.error('Error validating API key:', error)
-            return false
-          }
-        },
-      }),
-    ],
+    plugins: [payloadPluginWebhooks()],
     secret: process.env.PAYLOAD_SECRET || 'test-secret_key',
     sharp,
     typescript: {

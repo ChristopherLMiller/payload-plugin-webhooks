@@ -21,4 +21,12 @@ describe('Plugin integration tests', () => {
     })
     expect(global).toBeDefined()
   })
+
+  test('does not register a plugin-owned api-keys collection', () => {
+    expect('api-keys' in payload.collections).toBe(false)
+  })
+
+  test('uses Payload native API key strategy on users', () => {
+    expect(payload.authStrategies.some((strategy) => strategy.name === 'users-api-key')).toBe(true)
+  })
 })
