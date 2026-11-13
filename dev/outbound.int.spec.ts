@@ -210,7 +210,11 @@ describe('outbound webhooks', () => {
       })
       return doc.status === 'failed' ? doc : undefined
     })
-    expect(delivery).toMatchObject({ attempts: 1, error: 'Received HTTP 503', responseStatus: 503 })
+    expect(delivery).toMatchObject({
+      attempts: 1,
+      error: expect.stringContaining('Received HTTP 503') as string,
+      responseStatus: 503,
+    })
 
     const { docs: jobs } = await payload.find({
       collection: 'payload-jobs',
@@ -306,5 +310,93 @@ describe('outbound webhooks', () => {
       user: editor,
     })
     expect(own.id).toBeDefined()
+  })
+
+  test('"Send test request" sends a sample using saved settings and reports the result', async () => {
+    const endpoint = await createEndpoint('/test-button', {
+      authentication: { type: 'bearer', token: 'tkn' },
+      enabled: false, // tests work even while disabled
+    })
+    const latest = await payload.create({
+      collection: 'posts',
+      data: { status: 'published', title: 'latest for sample' },
+    })
+
+    const endpoints = (payload.collections['webhook-endpoints'].config.endpoints || []) as {
+      handler: (req: unknown) => Promise<Response>
+      path: string
+    }[]
+    const handler = endpoints.find((e) => e.path === '/:id/test')?.handler
+    expect(handler).toBeDefined()
+
+    const callTest = async (user?: TypedUser) => {
+      const req = await createLocalReq({ user }, payload)
+      req.routeParams = { id: endpoint.id }
+      const response = await handler!(req)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- JSON response
+      return { body: (await response.json()) as Record<string, any>, status: response.status }
+    }
+
+    expect((await callTest()).status).toBe(401)
+
+    const { body, status } = await callTest(admin)
+    expect(status).toBe(200)
+    expect(body).toMatchObject({ ok: true, status: 200 })
+
+    const request = await waitFor(() =>
+      requestsTo('/test-button').find((r) => r.body.deliveryId === body.deliveryId),
+    )
+    expect(request.headers.authorization).toBe('Bearer tkn')
+    expect(request.body).toMatchObject({
+      collection: 'posts',
+      data: { id: latest.id, title: 'latest for sample' },
+      event: 'webhook.test',
+      test: true,
+    })
+
+    const delivery = await payload.findByID({
+      id: body.deliveryId,
+      collection: 'webhook-deliveries',
+    })
+    expect(delivery).toMatchObject({ event: 'webhook.test', status: 'success' })
+
+    // Failure explains what to check.
+    responseStatusByPath.set('/test-button', 404)
+    const failed = await callTest(admin)
+    expect(failed.body.ok).toBe(false)
+    expect(failed.body.error).toMatch(/HTTP 404.*check it/)
+
+    // Network failures explain what to check.
+    const closedPort = await new Promise<number>((resolve) => {
+      const probe = createServer().listen(0, '127.0.0.1', () => {
+        const { port } = probe.address() as AddressInfo
+        probe.close(() => resolve(port))
+      })
+    })
+    await payload.update({
+      id: endpoint.id,
+      collection: 'webhook-endpoints',
+      data: { url: `http://127.0.0.1:${closedPort}/closed` },
+    })
+    expect((await callTest(admin)).body.error).toMatch(/Nothing is listening/)
+
+    await payload.update({
+      id: endpoint.id,
+      collection: 'webhook-endpoints',
+      data: { url: 'http://127.0.0.1:1/blocked' },
+    })
+    expect((await callTest(admin)).body.error).toMatch(/port is blocked/)
+  })
+
+  test('endpoint page lists its deliveries', async () => {
+    const endpoint = await createEndpoint('/joined')
+    const post = await payload.create({ collection: 'posts', data: { status: 'published' } })
+    await waitFor(() => requestsTo('/joined').find((r) => r.body.id === post.id))
+
+    const doc = await payload.findByID({ id: endpoint.id, collection: 'webhook-endpoints' })
+    const deliveries = (doc as { deliveries?: { docs: unknown[] } }).deliveries
+    expect(deliveries?.docs.length).toBeGreaterThan(0)
+
+    await disable(endpoint.id)
   })
 })

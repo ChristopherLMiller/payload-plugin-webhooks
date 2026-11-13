@@ -14,7 +14,7 @@ export const createDeliveriesCollection = ({ access }: { access: Access }): Coll
   admin: {
     defaultColumns: ['event', 'endpoint', 'status', 'responseStatus', 'attempts', 'createdAt'],
     description:
-      'One entry per webhook request, with the outcome of the latest attempt. Failed deliveries are retried automatically with increasing delays. Request bodies are not stored.',
+      'One entry per request sent by a Webhook Endpoint. Delivered: the other site answered with a 2xx status. Failed: the latest attempt failed; it is retried automatically with increasing delays, and Attempts counts the tries so far. Skipped: the endpoint was disabled or deleted before sending. Pending: queued. Open an entry for the error and the response. Request bodies are not stored.',
     group: 'Webhooks',
     useAsTitle: 'event',
   },
@@ -28,7 +28,9 @@ export const createDeliveriesCollection = ({ access }: { access: Access }): Coll
     {
       name: 'event',
       type: 'text',
-      admin: { description: 'Collection and action, e.g. posts.update.' },
+      admin: {
+        description: 'Collection and action, e.g. posts.update. "webhook.test" is a test request.',
+      },
     },
     { name: 'documentId', type: 'text', index: true, label: 'Document ID' },
     {
@@ -50,7 +52,7 @@ export const createDeliveriesCollection = ({ access }: { access: Access }): Coll
     {
       name: 'error',
       type: 'textarea',
-      admin: { description: 'Why the latest attempt failed or was skipped.' },
+      admin: { description: 'Why the latest attempt failed or was skipped, and what to check.' },
     },
     {
       name: 'responseBody',

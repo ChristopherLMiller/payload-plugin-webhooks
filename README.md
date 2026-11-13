@@ -49,6 +49,14 @@ Once the plugin is installed, the admin panel gets a **Webhooks** group with:
 - **Webhook Endpoints**: where you add each URL to call.
 - **Webhook Deliveries**: a log of every request: status, response code, response body (first 2 KB), attempts and errors.
 
+Everything needed to set up an endpoint is in the admin panel, so you shouldn't need this README for day-to-day setup:
+
+- **How to set up a webhook**: steps, plus where to find the URL and which authentication to use for Home Assistant, Zapier, Make, n8n, IFTTT and your own API.
+- **What the other site receives**: a live preview of the exact request (headers and body) as you fill in the form.
+- **Send test request** (sidebar): sends a sample using the saved settings (`"event": "webhook.test"`, with the latest document from the first selected collection) and shows the response.
+- **Delivery log** tab: that endpoint's recent requests.
+- Failures come with a plain-language next step, e.g. *HTTP 401: check Authentication*, *HTTP 404: check the URL*, *connection refused*, *timeout*.
+
 ### Adding an endpoint
 
 | Field | What it does |
@@ -297,11 +305,11 @@ v1.1.x added a plugin-owned `api-keys` collection. That store is gone. After upg
 
 ### Managing stream configuration
 
-The **Webhooks** global (under the **Webhooks** group) controls which events the SSE stream sends. It does not affect outbound webhooks, which are configured per endpoint.
+The **Event Stream** global (under the **Webhooks** group) controls which events the SSE stream sends. It does not affect outbound webhooks, which are configured per endpoint.
 
 ### Configuring Collections
 
-1. Navigate to **Globals** → **Webhooks** in the admin panel
+1. Navigate to **Webhooks** → **Event Stream** in the admin panel
 2. Add collections you want to monitor
 3. For each collection, configure:
    - **Enabled**: Toggle to enable/disable webhooks for this collection

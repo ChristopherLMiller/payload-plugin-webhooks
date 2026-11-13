@@ -79,7 +79,11 @@ export interface Config {
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    'webhook-endpoints': {
+      deliveries: 'webhook-deliveries';
+    };
+  };
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
     posts: PostsSelect<false> | PostsSelect<true>;
@@ -209,7 +213,7 @@ export interface Media {
   focalY?: number | null;
 }
 /**
- * Send an HTTP request to another service (for example a Home Assistant webhook) when documents change. Each change is delivered in the background with automatic retries; see Webhook Deliveries for results.
+ * Call another website (Home Assistant, Zapier, n8n, your own API, …) when documents are created, updated or deleted. Open an endpoint for step-by-step setup help and a test button.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "webhook-endpoints".
@@ -217,47 +221,47 @@ export interface Media {
 export interface WebhookEndpoint {
   id: string;
   /**
-   * A label for your own reference, e.g. "Home Assistant".
+   * Turn off to stop sending without deleting the endpoint.
    */
-  name: string;
   enabled?: boolean | null;
-  method: 'POST' | 'PUT' | 'PATCH';
   /**
-   * The full address to call. For a Home Assistant webhook trigger: https://<your-ha>/api/webhook/<webhook_id>
-   */
-  url: string;
-  /**
-   * Which changes send a request to this URL.
-   */
-  events: {
-    /**
-     * Changes to documents in these collections.
-     */
-    collections: ('posts' | 'internal-notes' | 'media')[];
-    /**
-     * Which kinds of change.
-     */
-    operations: ('create' | 'update' | 'delete')[];
-  };
-  /**
-   * Documents are read with this user’s access before they are sent, so the receiving service only gets what this user may read. Create a dedicated user with limited access for external services. Delete events only include the document id.
+   * Documents are read with this user’s access before sending, so the other site only gets what this user can read. For external sites, create a dedicated user with limited access.
    */
   runAs: string | User;
   /**
-   * Include the document (and previous version, for updates) in the request body. Turn off to send only the collection, action and id.
+   * Send the document (and, for updates, the previous version). Turn off to send only the collection, action and id.
    */
   includeDocument?: boolean | null;
+  /**
+   * How long to wait for the other site to answer before retrying.
+   */
   timeoutSeconds?: number | null;
   /**
-   * How this request proves itself to the receiving service.
+   * A label for your own reference, e.g. "Home Assistant".
+   */
+  name: string;
+  /**
+   * Almost always POST.
+   */
+  method: 'POST' | 'PUT' | 'PATCH';
+  /**
+   * The incoming-webhook address from the other site. See "How to set up a webhook" above for where to find it.
+   */
+  url: string;
+  /**
+   * A request is sent for every change that matches both a collection and an operation.
+   */
+  events: {
+    collections: ('posts' | 'internal-notes' | 'media')[];
+    operations: ('create' | 'update' | 'delete')[];
+  };
+  /**
+   * Only needed if the other site asks for a token, password or API key. Most incoming-webhook URLs (Home Assistant, Zapier, Make, IFTTT) need None.
    */
   authentication: {
-    /**
-     * Home Assistant webhook triggers need none (the webhook id in the URL is the secret). Home Assistant’s REST API uses a Bearer long-lived access token.
-     */
     type: 'none' | 'bearer' | 'basic' | 'header';
     /**
-     * Sent as "Authorization: Bearer <token>". Stored encrypted; shown masked after saving.
+     * Sent as "Authorization: Bearer <token>". For Home Assistant’s REST API, create a long-lived access token on your HA profile page. Stored encrypted; shown masked after saving.
      */
     token?: string | null;
     username?: string | null;
@@ -265,6 +269,9 @@ export interface WebhookEndpoint {
      * Stored encrypted; shown masked after saving.
      */
     password?: string | null;
+    /**
+     * The header the other site reads the key from.
+     */
     headerName?: string | null;
     /**
      * Stored encrypted; shown masked after saving.
@@ -272,11 +279,11 @@ export interface WebhookEndpoint {
     headerValue?: string | null;
   };
   /**
-   * Optional. When set, each request carries a "X-Webhook-Signature: t=<unix time>,v1=<hex>" header, where v1 is the HMAC-SHA256 of "<t>.<raw body>" with this secret, so the receiver can verify the request came from here. Stored encrypted; shown masked after saving.
+   * Lets your own code prove a request came from this site. Each request gets a "X-Webhook-Signature: t=<unix time>,v1=<hex>" header, where v1 is the HMAC-SHA256 of "<t>.<raw body>" using this secret. No-code tools ignore it. Stored encrypted; shown masked after saving.
    */
   signingSecret?: string | null;
   /**
-   * Extra headers sent with every request. Not encrypted; use Authentication for secrets. Requests also include "X-Webhook-Event" (e.g. posts.update) and "X-Webhook-Delivery" (a unique id per delivery).
+   * Extra headers sent with every request. Not encrypted, so put secrets under Authentication. "X-Webhook-Event" and "X-Webhook-Delivery" are always sent.
    */
   headers?:
     | {
@@ -285,11 +292,16 @@ export interface WebhookEndpoint {
         id?: string | null;
       }[]
     | null;
+  deliveries?: {
+    docs?: (string | WebhookDelivery)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
   updatedAt: string;
   createdAt: string;
 }
 /**
- * One entry per webhook request, with the outcome of the latest attempt. Failed deliveries are retried automatically with increasing delays. Request bodies are not stored.
+ * One entry per request sent by a Webhook Endpoint. Delivered: the other site answered with a 2xx status. Failed: the latest attempt failed; it is retried automatically with increasing delays, and Attempts counts the tries so far. Skipped: the endpoint was disabled or deleted before sending. Pending: queued. Open an entry for the error and the response. Request bodies are not stored.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "webhook-deliveries".
@@ -298,7 +310,7 @@ export interface WebhookDelivery {
   id: string;
   endpoint?: (string | null) | WebhookEndpoint;
   /**
-   * Collection and action, e.g. posts.update.
+   * Collection and action, e.g. posts.update. "webhook.test" is a test request.
    */
   event?: string | null;
   documentId?: string | null;
@@ -308,7 +320,7 @@ export interface WebhookDelivery {
   durationMs?: number | null;
   lastAttemptAt?: string | null;
   /**
-   * Why the latest attempt failed or was skipped.
+   * Why the latest attempt failed or was skipped, and what to check.
    */
   error?: string | null;
   /**
@@ -570,8 +582,11 @@ export interface MediaSelect<T extends boolean = true> {
  * via the `definition` "webhook-endpoints_select".
  */
 export interface WebhookEndpointsSelect<T extends boolean = true> {
-  name?: T;
   enabled?: T;
+  runAs?: T;
+  includeDocument?: T;
+  timeoutSeconds?: T;
+  name?: T;
   method?: T;
   url?: T;
   events?:
@@ -580,9 +595,6 @@ export interface WebhookEndpointsSelect<T extends boolean = true> {
         collections?: T;
         operations?: T;
       };
-  runAs?: T;
-  includeDocument?: T;
-  timeoutSeconds?: T;
   authentication?:
     | T
     | {
@@ -601,6 +613,7 @@ export interface WebhookEndpointsSelect<T extends boolean = true> {
         value?: T;
         id?: T;
       };
+  deliveries?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -694,7 +707,7 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
   createdAt?: T;
 }
 /**
- * Configure which collections and CRUD operations should emit webhook events.
+ * Live event stream for apps and dashboards that stay connected to this site (Server-Sent Events at /api/webhooks/stream; clients authenticate like any API request). Choose which changes are pushed to them below. To call another website when something changes, use Webhook Endpoints instead.
  *
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "webhooks".
@@ -702,7 +715,7 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
 export interface Webhook {
   id: string;
   /**
-   * Configure webhook events for each collection.
+   * Collections whose changes are pushed to connected stream clients. Clients only receive documents and fields their own user can read.
    */
   collections?:
     | {
@@ -712,7 +725,7 @@ export interface Webhook {
         collection: 'posts' | 'internal-notes' | 'media';
         enabled?: boolean | null;
         /**
-         * Select which CRUD operations should emit webhook events.
+         * Which changes to push. Read sends an event every time a document is read, which can be very frequent.
          */
         operations?: {
           create?: boolean | null;

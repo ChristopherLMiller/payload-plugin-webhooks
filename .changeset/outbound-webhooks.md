@@ -11,3 +11,5 @@ Add outbound webhooks: HTTP requests sent to other services when documents chang
 - Secrets are encrypted at rest with a key derived from `PAYLOAD_SECRET` and masked when read.
 - Postgres / SQLite projects need a migration for the new collections and `payload-jobs`.
 - Disable with `outbound: false`.
+- The admin panel explains itself: a setup guide with per-site instructions (Home Assistant, Zapier, Make, n8n, IFTTT, custom APIs), a live preview of the request, a **Send test request** button (`POST /api/webhook-endpoints/:id/test`), a per-endpoint **Delivery log** tab, and plain-language hints on failures.
+- The stream settings global is now labelled **Event Stream** (slug unchanged) and explains how it differs from endpoints.

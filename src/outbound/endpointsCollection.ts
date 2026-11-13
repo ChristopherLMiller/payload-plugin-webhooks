@@ -1,8 +1,15 @@
-import type { Access, CollectionConfig, Validate } from 'payload'
+import type { Access, CollectionConfig, Field, Validate } from 'payload'
 
-import { DELIVERY_HEADER, ENDPOINTS_SLUG, EVENT_HEADER, SIGNATURE_HEADER } from './constants.js'
+import {
+  DELIVERIES_SLUG,
+  DELIVERY_HEADER,
+  ENDPOINTS_SLUG,
+  EVENT_HEADER,
+  SIGNATURE_HEADER,
+} from './constants.js'
 import { invalidateEndpointCache } from './matchEndpoints.js'
 import { secretField } from './secrets.js'
+import { createTestEndpoint } from './testEndpoint.js'
 
 type Options = {
   access: Access
@@ -60,6 +67,15 @@ export const createEndpointsCollection = ({
       : 'You can only set "Run as" to yourself. Ask an administrator to choose another user.'
   }
 
+  const uiField = (name: string, component: string, position?: 'sidebar'): Field => ({
+    name,
+    type: 'ui',
+    admin: {
+      components: { Field: `payload-plugin-webhooks/client#${component}` },
+      ...(position ? { position } : {}),
+    },
+  })
+
   return {
     slug: ENDPOINTS_SLUG,
     access: {
@@ -71,82 +87,29 @@ export const createEndpointsCollection = ({
     admin: {
       defaultColumns: ['name', 'url', 'enabled', 'updatedAt'],
       description:
-        'Send an HTTP request to another service (for example a Home Assistant webhook) when documents change. Each change is delivered in the background with automatic retries; see Webhook Deliveries for results.',
+        'Call another website (Home Assistant, Zapier, n8n, your own API, …) when documents are created, updated or deleted. Open an endpoint for step-by-step setup help and a test button.',
       group: 'Webhooks',
       useAsTitle: 'name',
     },
+    endpoints: [createTestEndpoint({ runAsCollection })],
     fields: [
-      {
-        name: 'name',
-        type: 'text',
-        admin: { description: 'A label for your own reference, e.g. "Home Assistant".' },
-        required: true,
-      },
+      // Sidebar
+      uiField('sendTest', 'SendTestButton', 'sidebar'),
       {
         name: 'enabled',
         type: 'checkbox',
-        admin: { position: 'sidebar' },
+        admin: {
+          description: 'Turn off to stop sending without deleting the endpoint.',
+          position: 'sidebar',
+        },
         defaultValue: true,
-      },
-      {
-        type: 'row',
-        fields: [
-          {
-            name: 'method',
-            type: 'select',
-            admin: { width: '20%' },
-            defaultValue: 'POST',
-            options: ['POST', 'PUT', 'PATCH'],
-            required: true,
-          },
-          {
-            name: 'url',
-            type: 'text',
-            admin: {
-              description:
-                'The full address to call. For a Home Assistant webhook trigger: https://<your-ha>/api/webhook/<webhook_id>',
-              width: '80%',
-            },
-            label: 'URL',
-            required: true,
-            validate: validateUrl,
-          },
-        ],
-      },
-      {
-        name: 'events',
-        type: 'group',
-        admin: { description: 'Which changes send a request to this URL.' },
-        fields: [
-          {
-            name: 'collections',
-            type: 'select',
-            admin: { description: 'Changes to documents in these collections.' },
-            hasMany: true,
-            options: collectionOptions,
-            required: true,
-          },
-          {
-            name: 'operations',
-            type: 'select',
-            admin: { description: 'Which kinds of change.' },
-            defaultValue: ['create', 'update', 'delete'],
-            hasMany: true,
-            options: [
-              { label: 'Create', value: 'create' },
-              { label: 'Update', value: 'update' },
-              { label: 'Delete', value: 'delete' },
-            ],
-            required: true,
-          },
-        ],
       },
       {
         name: 'runAs',
         type: 'relationship',
         admin: {
           description:
-            'Documents are read with this user’s access before they are sent, so the receiving service only gets what this user may read. Create a dedicated user with limited access for external services. Delete events only include the document id.',
+            'Documents are read with this user’s access before sending, so the other site only gets what this user can read. For external sites, create a dedicated user with limited access.',
           position: 'sidebar',
         },
         defaultValue: ({ user }: { user?: { id: number | string } | null }) => user?.id,
@@ -160,96 +123,223 @@ export const createEndpointsCollection = ({
         type: 'checkbox',
         admin: {
           description:
-            'Include the document (and previous version, for updates) in the request body. Turn off to send only the collection, action and id.',
+            'Send the document (and, for updates, the previous version). Turn off to send only the collection, action and id.',
           position: 'sidebar',
         },
         defaultValue: true,
+        label: 'Include document',
       },
       {
         name: 'timeoutSeconds',
         type: 'number',
-        admin: { position: 'sidebar' },
+        admin: {
+          description: 'How long to wait for the other site to answer before retrying.',
+          position: 'sidebar',
+        },
         defaultValue: 10,
         label: 'Timeout (seconds)',
         max: 60,
         min: 1,
       },
+
+      // Main area
       {
-        name: 'authentication',
-        type: 'group',
-        admin: { description: 'How this request proves itself to the receiving service.' },
-        fields: [
+        type: 'tabs',
+        tabs: [
           {
-            name: 'type',
-            type: 'select',
-            admin: {
-              description:
-                'Home Assistant webhook triggers need none (the webhook id in the URL is the secret). Home Assistant’s REST API uses a Bearer long-lived access token.',
-            },
-            defaultValue: 'none',
-            options: [
-              { label: 'None', value: 'none' },
-              { label: 'Bearer token', value: 'bearer' },
-              { label: 'Basic (username & password)', value: 'basic' },
-              { label: 'Custom header', value: 'header' },
-            ],
-            required: true,
-          },
-          secretField({
-            name: 'token',
-            condition: authIs('bearer'),
-            description: 'Sent as "Authorization: Bearer <token>".',
-            label: 'Token',
-          }),
-          {
-            type: 'row',
-            admin: { condition: authIs('basic') },
             fields: [
-              { name: 'username', type: 'text', admin: { condition: authIs('basic') } },
-              secretField({ name: 'password', condition: authIs('basic'), label: 'Password' }),
+              uiField('setupGuide', 'EndpointSetupGuide'),
+              {
+                name: 'name',
+                type: 'text',
+                admin: { description: 'A label for your own reference, e.g. "Home Assistant".' },
+                required: true,
+              },
+              {
+                type: 'row',
+                fields: [
+                  {
+                    name: 'method',
+                    type: 'select',
+                    admin: {
+                      description: 'Almost always POST.',
+                      width: '20%',
+                    },
+                    defaultValue: 'POST',
+                    options: ['POST', 'PUT', 'PATCH'],
+                    required: true,
+                  },
+                  {
+                    name: 'url',
+                    type: 'text',
+                    admin: {
+                      description:
+                        'The incoming-webhook address from the other site. See "How to set up a webhook" above for where to find it.',
+                      placeholder: 'https://',
+                      width: '80%',
+                    },
+                    label: 'URL',
+                    required: true,
+                    validate: validateUrl,
+                  },
+                ],
+              },
+              {
+                name: 'events',
+                type: 'group',
+                admin: {
+                  description:
+                    'A request is sent for every change that matches both a collection and an operation.',
+                },
+                fields: [
+                  {
+                    type: 'row',
+                    fields: [
+                      {
+                        name: 'collections',
+                        type: 'select',
+                        admin: { width: '50%' },
+                        hasMany: true,
+                        options: collectionOptions,
+                        required: true,
+                      },
+                      {
+                        name: 'operations',
+                        type: 'select',
+                        admin: { width: '50%' },
+                        defaultValue: ['create', 'update', 'delete'],
+                        hasMany: true,
+                        options: [
+                          { label: 'Create', value: 'create' },
+                          { label: 'Update', value: 'update' },
+                          { label: 'Delete', value: 'delete' },
+                        ],
+                        required: true,
+                      },
+                    ],
+                  },
+                ],
+              },
+              {
+                name: 'authentication',
+                type: 'group',
+                admin: {
+                  description:
+                    'Only needed if the other site asks for a token, password or API key. Most incoming-webhook URLs (Home Assistant, Zapier, Make, IFTTT) need None.',
+                },
+                fields: [
+                  {
+                    name: 'type',
+                    type: 'select',
+                    defaultValue: 'none',
+                    options: [
+                      { label: 'None', value: 'none' },
+                      { label: 'Bearer token (Authorization: Bearer …)', value: 'bearer' },
+                      { label: 'Username & password (Basic auth)', value: 'basic' },
+                      { label: 'Custom header (e.g. X-API-Key)', value: 'header' },
+                    ],
+                    required: true,
+                  },
+                  secretField({
+                    name: 'token',
+                    condition: authIs('bearer'),
+                    description:
+                      'Sent as "Authorization: Bearer <token>". For Home Assistant’s REST API, create a long-lived access token on your HA profile page.',
+                    label: 'Token',
+                  }),
+                  {
+                    type: 'row',
+                    admin: { condition: authIs('basic') },
+                    fields: [
+                      { name: 'username', type: 'text', admin: { condition: authIs('basic') } },
+                      secretField({
+                        name: 'password',
+                        condition: authIs('basic'),
+                        label: 'Password',
+                      }),
+                    ],
+                  },
+                  {
+                    type: 'row',
+                    admin: { condition: authIs('header') },
+                    fields: [
+                      {
+                        name: 'headerName',
+                        type: 'text',
+                        admin: {
+                          condition: authIs('header'),
+                          description: 'The header the other site reads the key from.',
+                          placeholder: 'X-API-Key',
+                        },
+                        label: 'Header name',
+                      },
+                      secretField({
+                        name: 'headerValue',
+                        condition: authIs('header'),
+                        label: 'Header value',
+                      }),
+                    ],
+                  },
+                ],
+              },
+              {
+                type: 'collapsible',
+                admin: {
+                  description: 'Usually not needed. Use these when you control the receiving code.',
+                  initCollapsed: true,
+                },
+                fields: [
+                  secretField({
+                    name: 'signingSecret',
+                    description: `Lets your own code prove a request came from this site. Each request gets a "${SIGNATURE_HEADER}: t=<unix time>,v1=<hex>" header, where v1 is the HMAC-SHA256 of "<t>.<raw body>" using this secret. No-code tools ignore it.`,
+                    label: 'Signing secret',
+                  }),
+                  {
+                    name: 'headers',
+                    type: 'array',
+                    admin: {
+                      description: `Extra headers sent with every request. Not encrypted, so put secrets under Authentication. "${EVENT_HEADER}" and "${DELIVERY_HEADER}" are always sent.`,
+                      initCollapsed: true,
+                    },
+                    fields: [
+                      {
+                        type: 'row',
+                        fields: [
+                          { name: 'name', type: 'text', required: true },
+                          { name: 'value', type: 'text', required: true },
+                        ],
+                      },
+                    ],
+                    label: 'Additional headers',
+                  },
+                ],
+                label: 'Advanced',
+              },
+              uiField('requestPreview', 'RequestPreview'),
             ],
+            label: 'Setup',
           },
           {
-            type: 'row',
-            admin: { condition: authIs('header') },
+            description:
+              'The latest requests to this endpoint. Failed requests are retried automatically with increasing delays; open one to see the full error and response.',
             fields: [
               {
-                name: 'headerName',
-                type: 'text',
-                admin: { condition: authIs('header'), placeholder: 'X-API-Key' },
-                label: 'Header name',
+                name: 'deliveries',
+                type: 'join',
+                admin: {
+                  allowCreate: false,
+                  defaultColumns: ['event', 'status', 'responseStatus', 'attempts', 'createdAt'],
+                },
+                collection: DELIVERIES_SLUG,
+                defaultLimit: 20,
+                defaultSort: '-createdAt',
+                label: 'Recent deliveries',
+                on: 'endpoint',
               },
-              secretField({
-                name: 'headerValue',
-                condition: authIs('header'),
-                label: 'Header value',
-              }),
             ],
+            label: 'Delivery log',
           },
         ],
-      },
-      secretField({
-        name: 'signingSecret',
-        description: `Optional. When set, each request carries a "${SIGNATURE_HEADER}: t=<unix time>,v1=<hex>" header, where v1 is the HMAC-SHA256 of "<t>.<raw body>" with this secret, so the receiver can verify the request came from here.`,
-        label: 'Signing secret',
-      }),
-      {
-        name: 'headers',
-        type: 'array',
-        admin: {
-          description: `Extra headers sent with every request. Not encrypted; use Authentication for secrets. Requests also include "${EVENT_HEADER}" (e.g. posts.update) and "${DELIVERY_HEADER}" (a unique id per delivery).`,
-          initCollapsed: true,
-        },
-        fields: [
-          {
-            type: 'row',
-            fields: [
-              { name: 'name', type: 'text', required: true },
-              { name: 'value', type: 'text', required: true },
-            ],
-          },
-        ],
-        label: 'Additional headers',
       },
     ],
     hooks: {

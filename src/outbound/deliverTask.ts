@@ -17,7 +17,7 @@ import { REVEAL_SECRETS_CONTEXT_KEY } from './secrets.js'
 
 const MAX_RESPONSE_BODY = 2048
 
-type Endpoint = {
+export type Endpoint = {
   authentication?: {
     headerName?: null | string
     headerValue?: null | string
@@ -119,6 +119,139 @@ const pruneOldDeliveries = async (payload: Payload, retainDays: number) => {
   }
 }
 
+export type DeliveryResult = {
+  durationMs: number
+  error?: string
+  ok: boolean
+  responseBody?: string
+  status?: number
+}
+
+/** Plain-language next step for common failures, shown in the delivery log. */
+export const hintFor = ({ code, status }: { code?: string; status?: number }): string => {
+  if (status === 401 || status === 403) {
+    return 'The site rejected the credentials: check Authentication (type, token, header name).'
+  }
+  if (status === 404) {
+    return 'Nothing exists at this URL: check it (for Home Assistant, the webhook id).'
+  }
+  if (status === 405) {
+    return 'The site does not accept this method: try POST.'
+  }
+  if (status === 400 || status === 422) {
+    return 'The site did not accept the request body. Services like Slack, Discord or Teams need their own message format; send to a relay such as n8n, Zapier, Make or Home Assistant instead.'
+  }
+  if (status !== undefined && status >= 500) {
+    return 'The receiving site had an error; it will be retried automatically.'
+  }
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
+    return 'The host name could not be found: check the URL.'
+  }
+  if (code === 'ECONNREFUSED') {
+    return 'Nothing is listening at that address and port: check the URL and that the site is running.'
+  }
+  if (code?.startsWith('CERT_') || code?.includes('SELF_SIGNED') || code?.includes('TLS')) {
+    return "The site's HTTPS certificate is not trusted by this server."
+  }
+  return ''
+}
+
+const describeError = (error: unknown, timeoutSeconds: number): string => {
+  if (error instanceof Error && error.name === 'TimeoutError') {
+    return `No response within ${timeoutSeconds}s. Check the site is reachable from this server, or raise the timeout.`
+  }
+  const cause = error instanceof Error ? error.cause : undefined
+  const code =
+    cause && typeof cause === 'object' && 'code' in cause ? String(cause.code) : undefined
+  const message =
+    (cause instanceof Error ? cause.message : '') ||
+    (error instanceof Error ? error.message : String(error))
+  if (message === 'bad port') {
+    return 'This port is blocked for outgoing requests by Node.js (a browser-style safety rule). Use a different port, e.g. 443, 80, 8123 or 8080.'
+  }
+  return [message, hintFor({ code })].filter(Boolean).join(' — ')
+}
+
+export const loadEndpointWithSecrets = async (
+  payload: Payload,
+  id: number | string,
+): Promise<Endpoint | null> =>
+  (await payload.findByID({
+    id,
+    collection: ENDPOINTS_SLUG,
+    context: { [REVEAL_SECRETS_CONTEXT_KEY]: true, [SKIP_WEBHOOKS_CONTEXT_KEY]: true },
+    depth: 0,
+    disableErrors: true,
+    joins: false,
+    overrideAccess: true,
+  })) as Endpoint | null
+
+/**
+ * Make one HTTP attempt for a delivery and record the outcome on its log entry.
+ */
+export const sendDelivery = async ({
+  body,
+  deliveryId,
+  endpoint,
+  payload,
+}: {
+  body: Record<string, unknown>
+  deliveryId: number | string
+  endpoint: Endpoint
+  payload: Payload
+}): Promise<DeliveryResult> => {
+  const timeoutSeconds = endpoint.timeoutSeconds || 10
+  const rawBody = JSON.stringify({ ...body, deliveryId })
+  const headers = buildRequestHeaders(endpoint, {
+    body: rawBody,
+    deliveryId,
+    event: String(body.event),
+  })
+
+  const started = Date.now()
+  let result: DeliveryResult
+  try {
+    const response = await fetch(endpoint.url, {
+      body: rawBody,
+      headers,
+      method: endpoint.method || 'POST',
+      // Don't forward credentials to wherever a redirect points; treat 3xx as a failure.
+      redirect: 'manual',
+      signal: AbortSignal.timeout(timeoutSeconds * 1000),
+    })
+    const durationMs = Date.now() - started
+    const responseBody = (await response.text().catch(() => '')).slice(0, MAX_RESPONSE_BODY)
+
+    if (response.ok) {
+      result = { durationMs, ok: true, responseBody, status: response.status }
+    } else {
+      const error =
+        response.status >= 300 && response.status < 400
+          ? `Redirected (${response.status}) to ${response.headers.get('location') ?? 'another address'}. Use that address as the URL.`
+          : [`Received HTTP ${response.status}`, hintFor({ status: response.status })]
+              .filter(Boolean)
+              .join(' — ')
+      result = { durationMs, error, ok: false, responseBody, status: response.status }
+    }
+  } catch (error) {
+    result = {
+      durationMs: Date.now() - started,
+      error: describeError(error, timeoutSeconds),
+      ok: false,
+    }
+  }
+
+  await recordAttempt(payload, deliveryId, {
+    durationMs: result.durationMs,
+    error: result.error ?? null,
+    responseBody: result.responseBody ?? null,
+    responseStatus: result.status ?? null,
+    status: result.ok ? 'success' : 'failed',
+  })
+
+  return result
+}
+
 export const createDeliverTask = ({
   retainDays,
   retries,
@@ -133,84 +266,25 @@ export const createDeliverTask = ({
     const { payload } = req
     const { body, deliveryId, endpointId } = input as DeliveryInput
 
-    const endpoint = (await payload.findByID({
-      id: endpointId,
-      collection: ENDPOINTS_SLUG,
-      context: { [REVEAL_SECRETS_CONTEXT_KEY]: true, [SKIP_WEBHOOKS_CONTEXT_KEY]: true },
-      depth: 0,
-      disableErrors: true,
-      overrideAccess: true,
-    })) as Endpoint | null
+    const endpoint = await loadEndpointWithSecrets(payload, endpointId)
 
     if (!endpoint || !endpoint.enabled) {
       await recordAttempt(payload, deliveryId, {
-        error: endpoint ? 'Endpoint is disabled.' : 'Endpoint was deleted.',
+        error: endpoint
+          ? 'The endpoint was disabled before this was sent.'
+          : 'The endpoint was deleted before this was sent.',
         status: 'skipped',
       })
       return { output: { skipped: true } }
     }
 
-    const rawBody = JSON.stringify({ ...body, deliveryId })
-    const headers = buildRequestHeaders(endpoint, {
-      body: rawBody,
-      deliveryId,
-      event: String(body.event),
-    })
-
-    const started = Date.now()
-    let response: Response
-    try {
-      response = await fetch(endpoint.url, {
-        body: rawBody,
-        headers,
-        method: endpoint.method || 'POST',
-        // Don't forward credentials to wherever a redirect points; treat 3xx as a failure.
-        redirect: 'manual',
-        signal: AbortSignal.timeout((endpoint.timeoutSeconds || 10) * 1000),
-      })
-    } catch (error) {
-      const message =
-        error instanceof Error && error.name === 'TimeoutError'
-          ? `Timed out after ${endpoint.timeoutSeconds || 10}s`
-          : error instanceof Error
-            ? (error.cause instanceof Error ? error.cause.message : '') || error.message
-            : String(error)
-      await recordAttempt(payload, deliveryId, {
-        durationMs: Date.now() - started,
-        error: message,
-        status: 'failed',
-      })
-      throw new Error(`Webhook delivery failed: ${message}`)
+    const result = await sendDelivery({ body, deliveryId, endpoint, payload })
+    if (!result.ok) {
+      throw new Error(`Webhook delivery failed: ${result.error}`)
     }
 
-    const durationMs = Date.now() - started
-    const responseBody = (await response.text().catch(() => '')).slice(0, MAX_RESPONSE_BODY)
-
-    if (!response.ok) {
-      const error =
-        response.status >= 300 && response.status < 400
-          ? `Redirected (${response.status}) to ${response.headers.get('location') ?? 'unknown'}; update the URL.`
-          : `Received HTTP ${response.status}`
-      await recordAttempt(payload, deliveryId, {
-        durationMs,
-        error,
-        responseBody,
-        responseStatus: response.status,
-        status: 'failed',
-      })
-      throw new Error(`Webhook delivery failed: ${error}`)
-    }
-
-    await recordAttempt(payload, deliveryId, {
-      durationMs,
-      error: null,
-      responseBody,
-      responseStatus: response.status,
-      status: 'success',
-    })
     await pruneOldDeliveries(payload, retainDays)
-
-    return { output: { status: response.status } }
+    return { output: { status: result.status } }
   },
   inputSchema: [
     { name: 'endpointId', type: 'json', required: true },
