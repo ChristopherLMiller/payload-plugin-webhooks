@@ -6,25 +6,93 @@
  * and re-run `payload generate:types` to regenerate this file.
  */
 
+/**
+ * Supported timezones in IANA format.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "supportedTimezones".
+ */
+export type SupportedTimezones =
+  | 'Pacific/Midway'
+  | 'Pacific/Niue'
+  | 'Pacific/Honolulu'
+  | 'Pacific/Rarotonga'
+  | 'America/Anchorage'
+  | 'Pacific/Gambier'
+  | 'America/Los_Angeles'
+  | 'America/Tijuana'
+  | 'America/Denver'
+  | 'America/Phoenix'
+  | 'America/Chicago'
+  | 'America/Guatemala'
+  | 'America/New_York'
+  | 'America/Bogota'
+  | 'America/Caracas'
+  | 'America/Santiago'
+  | 'America/Buenos_Aires'
+  | 'America/Sao_Paulo'
+  | 'Atlantic/South_Georgia'
+  | 'Atlantic/Azores'
+  | 'Atlantic/Cape_Verde'
+  | 'Europe/London'
+  | 'Europe/Berlin'
+  | 'Africa/Lagos'
+  | 'Europe/Athens'
+  | 'Africa/Cairo'
+  | 'Europe/Moscow'
+  | 'Asia/Riyadh'
+  | 'Asia/Dubai'
+  | 'Asia/Baku'
+  | 'Asia/Karachi'
+  | 'Asia/Tashkent'
+  | 'Asia/Calcutta'
+  | 'Asia/Dhaka'
+  | 'Asia/Almaty'
+  | 'Asia/Jakarta'
+  | 'Asia/Bangkok'
+  | 'Asia/Shanghai'
+  | 'Asia/Singapore'
+  | 'Asia/Tokyo'
+  | 'Asia/Seoul'
+  | 'Australia/Brisbane'
+  | 'Australia/Sydney'
+  | 'Pacific/Guam'
+  | 'Pacific/Noumea'
+  | 'Pacific/Auckland'
+  | 'Pacific/Fiji';
+
 export interface Config {
   auth: {
     users: UserAuthOperations;
   };
+  blocks: {};
   collections: {
-    posts: Post;
-    media: Media;
-    'plugin-collection': PluginCollection;
     users: User;
+    posts: Post;
+    'internal-notes': InternalNote;
+    media: Media;
+    'webhook-endpoints': WebhookEndpoint;
+    'webhook-deliveries': WebhookDelivery;
+    'payload-kv': PayloadKv;
+    'payload-jobs': PayloadJob;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
   };
-  collectionsJoins: {};
+  collectionsJoins: {
+    'webhook-endpoints': {
+      deliveries: 'webhook-deliveries';
+    };
+  };
   collectionsSelect: {
-    posts: PostsSelect<false> | PostsSelect<true>;
-    media: MediaSelect<false> | MediaSelect<true>;
-    'plugin-collection': PluginCollectionSelect<false> | PluginCollectionSelect<true>;
     users: UsersSelect<false> | UsersSelect<true>;
+    posts: PostsSelect<false> | PostsSelect<true>;
+    'internal-notes': InternalNotesSelect<false> | InternalNotesSelect<true>;
+    media: MediaSelect<false> | MediaSelect<true>;
+    'webhook-endpoints': WebhookEndpointsSelect<false> | WebhookEndpointsSelect<true>;
+    'webhook-deliveries': WebhookDeliveriesSelect<false> | WebhookDeliveriesSelect<true>;
+    'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
+    'payload-jobs': PayloadJobsSelect<false> | PayloadJobsSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
     'payload-migrations': PayloadMigrationsSelect<false> | PayloadMigrationsSelect<true>;
@@ -32,14 +100,26 @@ export interface Config {
   db: {
     defaultIDType: string;
   };
-  globals: {};
-  globalsSelect: {};
-  locale: null;
-  user: User & {
-    collection: 'users';
+  fallbackLocale: null;
+  globals: {
+    webhooks: Webhook;
   };
+  globalsSelect: {
+    webhooks: WebhooksSelect<false> | WebhooksSelect<true>;
+  };
+  locale: null;
+  widgets: {
+    collections: CollectionsWidget;
+  };
+  user: User;
   jobs: {
-    tasks: unknown;
+    tasks: {
+      deliverWebhook: TaskDeliverWebhook;
+      inline: {
+        input: unknown;
+        output: unknown;
+      };
+    };
     workflows: unknown;
   };
 }
@@ -63,11 +143,54 @@ export interface UserAuthOperations {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "users".
+ */
+export interface User {
+  id: string;
+  role: 'admin' | 'editor';
+  updatedAt: string;
+  createdAt: string;
+  enableAPIKey?: boolean | null;
+  apiKey?: string | null;
+  apiKeyIndex?: string | null;
+  hasAPIKey?: boolean | null;
+  email: string;
+  resetPasswordToken?: string | null;
+  resetPasswordExpiration?: string | null;
+  salt?: string | null;
+  hash?: string | null;
+  resetPasswordRequestedAt?: string | null;
+  loginAttempts?: number | null;
+  lockUntil?: string | null;
+  sessions?:
+    | {
+        id: string;
+        createdAt?: string | null;
+        expiresAt: string;
+      }[]
+    | null;
+  password?: string | null;
+  collection: 'users';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "posts".
  */
 export interface Post {
   id: string;
-  addedByPlugin?: string | null;
+  title?: string | null;
+  status?: ('draft' | 'published') | null;
+  internalNote?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "internal-notes".
+ */
+export interface InternalNote {
+  id: string;
+  body?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -90,30 +213,231 @@ export interface Media {
   focalY?: number | null;
 }
 /**
+ * Call another website (Home Assistant, Zapier, n8n, your own API, …) when documents are created, updated or deleted. Open an endpoint for step-by-step setup help and a test button.
+ *
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "plugin-collection".
+ * via the `definition` "webhook-endpoints".
  */
-export interface PluginCollection {
+export interface WebhookEndpoint {
   id: string;
+  /**
+   * Turn off to stop sending without deleting the endpoint.
+   */
+  enabled?: boolean | null;
+  /**
+   * Documents are read with this user’s access before sending, so the other site only gets what this user can read. For external sites, create a dedicated user with limited access.
+   */
+  runAs: string | User;
+  /**
+   * Send the document (and, for updates, the previous version). Turn off to send only the collection, action and id.
+   */
+  includeDocument?: boolean | null;
+  /**
+   * How long to wait for the other site to answer before retrying.
+   */
+  timeoutSeconds?: number | null;
+  /**
+   * A label for your own reference, e.g. "Home Assistant".
+   */
+  name: string;
+  /**
+   * Almost always POST.
+   */
+  method: 'POST' | 'PUT' | 'PATCH';
+  /**
+   * The incoming-webhook address from the other site. See "How to set up a webhook" above for where to find it.
+   */
+  url: string;
+  /**
+   * A request is sent for every change that matches both a collection and an operation.
+   */
+  events: {
+    collections: ('posts' | 'internal-notes' | 'media')[];
+    operations: ('create' | 'update' | 'delete')[];
+  };
+  /**
+   * Only needed if the other site asks for a token, password or API key. Most incoming-webhook URLs (Home Assistant, Zapier, Make, IFTTT) need None.
+   */
+  authentication: {
+    type: 'none' | 'bearer' | 'basic' | 'header';
+    /**
+     * Sent as "Authorization: Bearer <token>". For Home Assistant’s REST API, create a long-lived access token on your HA profile page. Stored encrypted; shown masked after saving.
+     */
+    token?: string | null;
+    username?: string | null;
+    /**
+     * Stored encrypted; shown masked after saving.
+     */
+    password?: string | null;
+    /**
+     * The header the other site reads the key from.
+     */
+    headerName?: string | null;
+    /**
+     * Stored encrypted; shown masked after saving.
+     */
+    headerValue?: string | null;
+  };
+  /**
+   * Lets your own code prove a request came from this site. Each request gets a "X-Webhook-Signature: t=<unix time>,v1=<hex>" header, where v1 is the HMAC-SHA256 of "<t>.<raw body>" using this secret. No-code tools ignore it. Stored encrypted; shown masked after saving.
+   */
+  signingSecret?: string | null;
+  /**
+   * Extra headers sent with every request. Not encrypted, so put secrets under Authentication. "X-Webhook-Event" and "X-Webhook-Delivery" are always sent.
+   */
+  headers?:
+    | {
+        name: string;
+        value: string;
+        id?: string | null;
+      }[]
+    | null;
+  deliveries?: {
+    docs?: (string | WebhookDelivery)[];
+    hasNextPage?: boolean;
+    totalDocs?: number;
+  };
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * One entry per request sent by a Webhook Endpoint. Delivered: the other site answered with a 2xx status. Failed: the latest attempt failed; it is retried automatically with increasing delays, and Attempts counts the tries so far. Skipped: the endpoint was disabled or deleted before sending. Pending: queued. Open an entry for the error and the response. Request bodies are not stored.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-deliveries".
+ */
+export interface WebhookDelivery {
+  id: string;
+  endpoint?: (string | null) | WebhookEndpoint;
+  /**
+   * Collection and action, e.g. posts.update. "webhook.test" is a test request.
+   */
+  event?: string | null;
+  documentId?: string | null;
+  status?: ('pending' | 'success' | 'failed' | 'skipped') | null;
+  attempts?: number | null;
+  responseStatus?: number | null;
+  durationMs?: number | null;
+  lastAttemptAt?: string | null;
+  /**
+   * Why the latest attempt failed or was skipped, and what to check.
+   */
+  error?: string | null;
+  /**
+   * First 2 KB of the response.
+   */
+  responseBody?: string | null;
   updatedAt: string;
   createdAt: string;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "users".
+ * via the `definition` "payload-kv".
  */
-export interface User {
+export interface PayloadKv {
   id: string;
+  key: string;
+  data:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-jobs".
+ */
+export interface PayloadJob {
+  id: string;
+  /**
+   * Input data provided to the job
+   */
+  input?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  taskStatus?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  completedAt?: string | null;
+  totalTried?: number | null;
+  /**
+   * If hasError is true this job will not be retried
+   */
+  hasError?: boolean | null;
+  /**
+   * If hasError is true, this is the error that caused it
+   */
+  error?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Task execution log
+   */
+  log?:
+    | {
+        executedAt: string;
+        completedAt: string;
+        taskSlug: 'inline' | 'deliverWebhook';
+        taskID: string;
+        input?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        output?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        state: 'failed' | 'succeeded';
+        error?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        id?: string | null;
+      }[]
+    | null;
+  taskSlug?: ('inline' | 'deliverWebhook') | null;
+  queue?: string | null;
+  waitUntil?: string | null;
+  processing?: boolean | null;
   updatedAt: string;
   createdAt: string;
-  email: string;
-  resetPasswordToken?: string | null;
-  resetPasswordExpiration?: string | null;
-  salt?: string | null;
-  hash?: string | null;
-  loginAttempts?: number | null;
-  lockUntil?: string | null;
-  password?: string | null;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -123,20 +447,28 @@ export interface PayloadLockedDocument {
   id: string;
   document?:
     | ({
+        relationTo: 'users';
+        value: string | User;
+      } | null)
+    | ({
         relationTo: 'posts';
         value: string | Post;
+      } | null)
+    | ({
+        relationTo: 'internal-notes';
+        value: string | InternalNote;
       } | null)
     | ({
         relationTo: 'media';
         value: string | Media;
       } | null)
     | ({
-        relationTo: 'plugin-collection';
-        value: string | PluginCollection;
+        relationTo: 'webhook-endpoints';
+        value: string | WebhookEndpoint;
       } | null)
     | ({
-        relationTo: 'users';
-        value: string | User;
+        relationTo: 'webhook-deliveries';
+        value: string | WebhookDelivery;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -182,10 +514,49 @@ export interface PayloadMigration {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "users_select".
+ */
+export interface UsersSelect<T extends boolean = true> {
+  role?: T;
+  updatedAt?: T;
+  createdAt?: T;
+  enableAPIKey?: T;
+  apiKey?: T;
+  apiKeyIndex?: T;
+  hasAPIKey?: T;
+  email?: T;
+  resetPasswordToken?: T;
+  resetPasswordExpiration?: T;
+  salt?: T;
+  hash?: T;
+  resetPasswordRequestedAt?: T;
+  loginAttempts?: T;
+  lockUntil?: T;
+  sessions?:
+    | T
+    | {
+        id?: T;
+        createdAt?: T;
+        expiresAt?: T;
+      };
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "posts_select".
  */
 export interface PostsSelect<T extends boolean = true> {
-  addedByPlugin?: T;
+  title?: T;
+  status?: T;
+  internalNote?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "internal-notes_select".
+ */
+export interface InternalNotesSelect<T extends boolean = true> {
+  body?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -208,27 +579,100 @@ export interface MediaSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "plugin-collection_select".
+ * via the `definition` "webhook-endpoints_select".
  */
-export interface PluginCollectionSelect<T extends boolean = true> {
-  id?: T;
+export interface WebhookEndpointsSelect<T extends boolean = true> {
+  enabled?: T;
+  runAs?: T;
+  includeDocument?: T;
+  timeoutSeconds?: T;
+  name?: T;
+  method?: T;
+  url?: T;
+  events?:
+    | T
+    | {
+        collections?: T;
+        operations?: T;
+      };
+  authentication?:
+    | T
+    | {
+        type?: T;
+        token?: T;
+        username?: T;
+        password?: T;
+        headerName?: T;
+        headerValue?: T;
+      };
+  signingSecret?: T;
+  headers?:
+    | T
+    | {
+        name?: T;
+        value?: T;
+        id?: T;
+      };
+  deliveries?: T;
   updatedAt?: T;
   createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
- * via the `definition` "users_select".
+ * via the `definition` "webhook-deliveries_select".
  */
-export interface UsersSelect<T extends boolean = true> {
+export interface WebhookDeliveriesSelect<T extends boolean = true> {
+  endpoint?: T;
+  event?: T;
+  documentId?: T;
+  status?: T;
+  attempts?: T;
+  responseStatus?: T;
+  durationMs?: T;
+  lastAttemptAt?: T;
+  error?: T;
+  responseBody?: T;
   updatedAt?: T;
   createdAt?: T;
-  email?: T;
-  resetPasswordToken?: T;
-  resetPasswordExpiration?: T;
-  salt?: T;
-  hash?: T;
-  loginAttempts?: T;
-  lockUntil?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-kv_select".
+ */
+export interface PayloadKvSelect<T extends boolean = true> {
+  key?: T;
+  data?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-jobs_select".
+ */
+export interface PayloadJobsSelect<T extends boolean = true> {
+  input?: T;
+  taskStatus?: T;
+  completedAt?: T;
+  totalTried?: T;
+  hasError?: T;
+  error?: T;
+  log?:
+    | T
+    | {
+        executedAt?: T;
+        completedAt?: T;
+        taskSlug?: T;
+        taskID?: T;
+        input?: T;
+        output?: T;
+        state?: T;
+        error?: T;
+        id?: T;
+      };
+  taskSlug?: T;
+  queue?: T;
+  waitUntil?: T;
+  processing?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -261,6 +705,109 @@ export interface PayloadMigrationsSelect<T extends boolean = true> {
   batch?: T;
   updatedAt?: T;
   createdAt?: T;
+}
+/**
+ * Live event stream for apps and dashboards that stay connected to this site (Server-Sent Events at /api/webhooks/stream; clients authenticate like any API request). Choose which changes are pushed to them below. To call another website when something changes, use Webhook Endpoints instead.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhooks".
+ */
+export interface Webhook {
+  id: string;
+  /**
+   * Collections whose changes are pushed to connected stream clients. Clients only receive documents and fields their own user can read.
+   */
+  collections?:
+    | {
+        /**
+         * Select a collection
+         */
+        collection: 'posts' | 'internal-notes' | 'media';
+        enabled?: boolean | null;
+        /**
+         * Which changes to push. Read sends an event every time a document is read, which can be very frequent.
+         */
+        operations?: {
+          create?: boolean | null;
+          read?: boolean | null;
+          update?: boolean | null;
+          delete?: boolean | null;
+        };
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt?: string | null;
+  createdAt?: string | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhooks_select".
+ */
+export interface WebhooksSelect<T extends boolean = true> {
+  collections?:
+    | T
+    | {
+        collection?: T;
+        enabled?: T;
+        operations?:
+          | T
+          | {
+              create?: T;
+              read?: T;
+              update?: T;
+              delete?: T;
+            };
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+  globalType?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "collections_widget".
+ */
+export interface CollectionsWidget {
+  data?: {
+    [k: string]: unknown;
+  };
+  width: 'full';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "TaskDeliverWebhook".
+ */
+export interface TaskDeliverWebhook {
+  input: {
+    endpointId:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+    deliveryId:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+    body:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+  };
+  output?: unknown;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

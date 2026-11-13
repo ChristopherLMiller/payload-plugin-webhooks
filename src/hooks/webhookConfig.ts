@@ -19,6 +19,14 @@ let cachedConfig: null | WebhookConfig[] = null
 let cacheTimestamp: number = 0
 const CACHE_TTL = 5000 // 5 seconds
 
+/**
+ * Drop the cached configuration so the next event re-reads the webhooks global.
+ */
+export const invalidateWebhookConfigCache = (): void => {
+  cachedConfig = null
+  cacheTimestamp = 0
+}
+
 export const getWebhookConfig = async (payload: Payload): Promise<WebhookConfig[]> => {
   const now = Date.now()
 

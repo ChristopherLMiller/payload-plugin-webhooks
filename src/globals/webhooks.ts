@@ -2,12 +2,9 @@ import type { GlobalConfig } from 'payload'
 
 export const WebhooksGlobal: GlobalConfig = {
   slug: 'webhooks',
-  access: {
-    read: () => true,
-    update: ({ req }) => !!req.user,
-  },
   admin: {
-    description: 'Configure which collections and CRUD operations should emit webhook events.',
+    description:
+      'Live event stream for apps and dashboards that stay connected to this site (Server-Sent Events at /api/webhooks/stream; clients authenticate like any API request). Choose which changes are pushed to them below. To call another website when something changes, use Webhook Endpoints instead.',
     group: 'Webhooks',
   },
   fields: [
@@ -18,7 +15,8 @@ export const WebhooksGlobal: GlobalConfig = {
         components: {
           RowLabel: 'payload-plugin-webhooks/client#WebhookCollectionRowLabel',
         },
-        description: 'Configure webhook events for each collection.',
+        description:
+          'Collections whose changes are pushed to connected stream clients. Clients only receive documents and fields their own user can read.',
       },
       fields: [
         {
@@ -40,7 +38,8 @@ export const WebhooksGlobal: GlobalConfig = {
           name: 'operations',
           type: 'group',
           admin: {
-            description: 'Select which CRUD operations should emit webhook events.',
+            description:
+              'Which changes to push. Read sends an event every time a document is read, which can be very frequent.',
           },
           fields: [
             {
@@ -79,5 +78,5 @@ export const WebhooksGlobal: GlobalConfig = {
       label: 'Collection Settings',
     },
   ],
-  label: 'Webhooks',
+  label: 'Event Stream',
 }

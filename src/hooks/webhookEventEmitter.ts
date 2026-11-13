@@ -1,7 +1,11 @@
 import { EventEmitter } from 'node:events'
 
-type CRUDAction = 'create' | 'delete' | 'read' | 'update'
+export type CRUDAction = 'create' | 'delete' | 'read' | 'update'
 
+/**
+ * Shape sent to stream subscribers. `data` / `previousData` are filtered through the
+ * subscriber's own read access before being sent.
+ */
 export type WebhookPayload = {
   action: CRUDAction
   collection: string
@@ -11,9 +15,28 @@ export type WebhookPayload = {
   timestamp: string
 }
 
+/**
+ * Internal event carrying the raw, unfiltered documents. Never sent to clients as-is.
+ */
+export type WebhookEvent = {
+  action: CRUDAction
+  collection: string
+  doc?: Record<string, unknown>
+  id?: number | string
+  previousDoc?: Record<string, unknown>
+  timestamp: string
+}
+
 class WebhookEventEmitter extends EventEmitter {
-  emitWebhook(payload: WebhookPayload): void {
-    this.emit('webhook', payload)
+  constructor() {
+    super()
+    // Every connected stream subscriber adds one listener. Node's default cap of 10 would
+    // print a MaxListenersExceededWarning as soon as an 11th client connects.
+    this.setMaxListeners(0)
+  }
+
+  emitWebhook(event: WebhookEvent): void {
+    this.emit('webhook', event)
   }
 }
 
