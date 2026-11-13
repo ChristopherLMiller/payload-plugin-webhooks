@@ -24,6 +24,13 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Cache MongoDB test binary
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/mongodb-binaries
+          key: mongodb-binaries-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: mongodb-binaries-${{ runner.os }}-
+
       - run: pnpm lint
 
       - name: Typecheck
