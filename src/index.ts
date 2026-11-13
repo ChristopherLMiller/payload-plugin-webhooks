@@ -1,12 +1,15 @@
-import type { Access, Config } from 'payload'
+import type { Access, CollectionConfig, Config, GlobalConfig } from 'payload'
 
 import type { StreamAuth } from './auth/defaultStreamAuth.js'
 
 import { createWebhookStreamHandler } from './endpoints/webhookStream.js'
 import { WebhooksGlobal } from './globals/webhooks.js'
+import { installTransactionHooks } from './hooks/transactionQueue.js'
+import { invalidateWebhookConfigCache } from './hooks/webhookConfig.js'
 import { emitWebhookEvent } from './hooks/webhookHandler.js'
 
 export type { StreamAuth } from './auth/defaultStreamAuth.js'
+export type { WebhookPayload } from './hooks/webhookEventEmitter.js'
 
 export type PayloadPluginWebhooksConfig = {
   /**
@@ -15,7 +18,7 @@ export type PayloadPluginWebhooksConfig = {
   access?: {
     /**
      * Control who can read webhook configuration
-     * @default () => true - Anyone can read
+     * @default ({ req }) => !!req.user - Only authenticated users
      */
     read?: Access
     /**
@@ -33,9 +36,30 @@ export type PayloadPluginWebhooksConfig = {
    * If omitted, the stream accepts any request already authenticated by the host app:
    * session cookies, JWT, Payload native API keys (`auth.useAPIKey`), Better Auth,
    * and any other registered auth strategies.
+   *
+   * Regardless of this check, each subscriber only receives events for documents and
+   * fields their user can read.
    */
   streamAuth?: StreamAuth
 }
+
+type Hooks = NonNullable<CollectionConfig['hooks']>
+
+const toArray = <T>(value: T | T[] | undefined): T[] =>
+  Array.isArray(value) ? value : value ? [value] : []
+
+const getSingularLabel = (col: CollectionConfig): string => {
+  const singular = col.labels?.singular
+  if (typeof singular === 'string') {
+    return singular
+  }
+  if (singular && typeof singular === 'object') {
+    return singular.en || singular[''] || col.slug
+  }
+  return col.slug.charAt(0).toUpperCase() + col.slug.slice(1)
+}
+
+const isAuthenticated: Access = ({ req }) => !!req.user
 
 export const payloadPluginWebhooks =
   (pluginOptions: PayloadPluginWebhooksConfig = {}) =>
@@ -48,139 +72,107 @@ export const payloadPluginWebhooks =
     }
 
     // Add webhook hooks to all collections for CRUD operations
-    if (config.collections) {
-      for (const collection of config.collections) {
-        // Store original hooks to preserve existing functionality
-        const originalAfterChange = collection.hooks?.afterChange
-        const originalAfterDelete = collection.hooks?.afterDelete
-        const originalAfterRead = collection.hooks?.afterRead
+    for (const collection of config.collections ?? []) {
+      const hooks: Hooks = collection.hooks ?? {}
+      collection.hooks = hooks
 
-        // Initialize hooks object if it doesn't exist
-        if (!collection.hooks) {
-          collection.hooks = {}
-        }
+      hooks.afterChange = [
+        ...toArray(hooks.afterChange),
+        async ({ doc, operation, previousDoc, req }) => {
+          await emitWebhookEvent({
+            id: doc.id,
+            action: operation === 'create' ? 'create' : 'update',
+            collectionSlug: collection.slug,
+            doc,
+            previousDoc: operation === 'create' ? undefined : previousDoc || undefined,
+            req,
+          })
+        },
+      ]
 
-        // Normalize hooks to arrays (Payload supports both function and array)
-        const existingAfterChange = Array.isArray(originalAfterChange)
-          ? originalAfterChange
-          : originalAfterChange
-            ? [originalAfterChange]
-            : []
-        const existingAfterDelete = Array.isArray(originalAfterDelete)
-          ? originalAfterDelete
-          : originalAfterDelete
-            ? [originalAfterDelete]
-            : []
-        const existingAfterRead = Array.isArray(originalAfterRead)
-          ? originalAfterRead
-          : originalAfterRead
-            ? [originalAfterRead]
-            : []
+      hooks.afterDelete = [
+        ...toArray(hooks.afterDelete),
+        async ({ id, doc, req }) => {
+          await emitWebhookEvent({
+            id: doc?.id ?? id,
+            action: 'delete',
+            collectionSlug: collection.slug,
+            doc,
+            req,
+          })
+        },
+      ]
 
-        // Hook for create and update operations
-        collection.hooks.afterChange = [
-          ...existingAfterChange,
-          async (args) => {
-            const { doc, operation, previousDoc, req } = args
-
-            const action = operation === 'create' ? 'create' : 'update'
-            await emitWebhookEvent(
-              action,
-              collection,
-              req.payload,
-              doc,
-              previousDoc || undefined,
-              doc.id,
-            )
-          },
-        ]
-
-        // Hook for delete operations
-        collection.hooks.afterDelete = [
-          ...existingAfterDelete,
-          async (args) => {
-            const { doc, req } = args
-
-            await emitWebhookEvent('delete', collection, req.payload, doc, undefined, doc.id)
-          },
-        ]
-
-        // Hook for read operations
-        collection.hooks.afterRead = [
-          ...existingAfterRead,
-          async (args) => {
-            const { doc, req } = args
-
-            await emitWebhookEvent('read', collection, req.payload, doc, undefined, doc.id)
-          },
-        ]
-      }
+      hooks.afterRead = [
+        ...toArray(hooks.afterRead),
+        async ({ doc, req }) => {
+          await emitWebhookEvent({
+            id: doc.id,
+            action: 'read',
+            collectionSlug: collection.slug,
+            doc,
+            req,
+          })
+          return doc
+        },
+      ]
     }
 
-    // Add webhooks global
-    if (!config.globals) {
-      config.globals = []
-    }
+    // The admin user collection is not offered as a webhook source.
+    const adminUserSlug = config.admin?.user ?? 'users'
+    const availableCollections = (config.collections ?? [])
+      .filter((col) => col.slug !== adminUserSlug)
+      .map((col) => ({ label: getSingularLabel(col), value: col.slug }))
 
-    // Populate collection select options dynamically and apply access control
-    const webhooksGlobal = {
+    const webhooksGlobal: GlobalConfig = {
       ...WebhooksGlobal,
       access: {
-        read: pluginOptions.access?.read || (() => true),
-        update: pluginOptions.access?.update || (({ req }) => !!req.user),
+        read: pluginOptions.access?.read || isAuthenticated,
+        update: pluginOptions.access?.update || isAuthenticated,
+      },
+      fields: WebhooksGlobal.fields.map((field) => {
+        if (!('name' in field) || field.name !== 'collections' || field.type !== 'array') {
+          return field
+        }
+        return {
+          ...field,
+          fields: field.fields.map((arrayField) =>
+            'name' in arrayField && arrayField.name === 'collection' && arrayField.type === 'select'
+              ? { ...arrayField, options: availableCollections }
+              : arrayField,
+          ),
+        }
+      }),
+      hooks: {
+        ...WebhooksGlobal.hooks,
+        afterChange: [
+          ...toArray(WebhooksGlobal.hooks?.afterChange),
+          () => {
+            invalidateWebhookConfigCache()
+          },
+        ],
       },
     }
-    if (webhooksGlobal.fields && config.collections) {
-      for (const field of webhooksGlobal.fields) {
-        if (
-          'name' in field &&
-          field.name === 'collections' &&
-          field.type === 'array' &&
-          'fields' in field &&
-          field.fields
-        ) {
-          for (const arrayField of field.fields) {
-            if (
-              'name' in arrayField &&
-              arrayField.name === 'collection' &&
-              arrayField.type === 'select' &&
-              'options' in arrayField
-            ) {
-              const availableCollections = config.collections
-                .filter((col) => col.slug !== 'users')
-                .map((col) => {
-                  const singularLabel =
-                    typeof col.labels?.singular === 'string'
-                      ? col.labels.singular
-                      : typeof col.labels?.singular === 'object'
-                        ? col.labels.singular.en || col.labels.singular[''] || col.slug
-                        : col.slug.charAt(0).toUpperCase() + col.slug.slice(1)
-                  return {
-                    label: singularLabel,
-                    value: col.slug,
-                  }
-                })
-              arrayField.options = availableCollections
-              break
-            }
-          }
-          break
-        }
-      }
-    }
 
-    config.globals.push(webhooksGlobal)
-
-    if (!config.endpoints) {
-      config.endpoints = []
-    }
+    config.globals = [...(config.globals ?? []), webhooksGlobal]
 
     // Add webhook stream endpoint for clients to listen to CRUD events
-    config.endpoints.push({
-      handler: createWebhookStreamHandler(pluginOptions.streamAuth),
-      method: 'get',
-      path: '/webhooks/stream',
-    })
+    config.endpoints = [
+      ...(config.endpoints ?? []),
+      {
+        handler: createWebhookStreamHandler(pluginOptions.streamAuth),
+        method: 'get',
+        path: '/webhooks/stream',
+      },
+    ]
+
+    // Hold events raised inside a transaction until it commits. Installed before the host
+    // app's own onInit so seed scripts and other startup writes are covered too.
+    const existingOnInit = config.onInit
+    config.onInit = async (payload) => {
+      installTransactionHooks(payload)
+      await existingOnInit?.(payload)
+    }
 
     return config
   }

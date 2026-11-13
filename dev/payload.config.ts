@@ -42,11 +42,46 @@ const buildConfigWithMemoryDB = async () => {
         auth: {
           useAPIKey: true,
         },
-        fields: [],
+        fields: [
+          {
+            name: 'role',
+            type: 'select',
+            defaultValue: 'editor',
+            options: ['admin', 'editor'],
+            required: true,
+          },
+        ],
       },
       {
         slug: 'posts',
-        fields: [],
+        access: {
+          // Admins see everything; everyone else only sees published posts.
+          read: ({ req }) =>
+            req.user?.role === 'admin' ? true : { status: { equals: 'published' } },
+        },
+        fields: [
+          { name: 'title', type: 'text' },
+          {
+            name: 'status',
+            type: 'select',
+            defaultValue: 'draft',
+            options: ['draft', 'published'],
+          },
+          {
+            name: 'internalNote',
+            type: 'text',
+            access: {
+              read: ({ req }) => req.user?.role === 'admin',
+            },
+          },
+        ],
+      },
+      {
+        slug: 'internal-notes',
+        access: {
+          read: ({ req }) => req.user?.role === 'admin',
+        },
+        fields: [{ name: 'body', type: 'text' }],
       },
       {
         slug: 'media',

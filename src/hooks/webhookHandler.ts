@@ -1,34 +1,46 @@
-import type { CollectionConfig, Payload } from 'payload'
+import type { PayloadRequest } from 'payload'
 
+import { queueWebhookEvent } from './transactionQueue.js'
 import { shouldEmitWebhook } from './webhookConfig.js'
-import { webhookEventEmitter, type WebhookPayload } from './webhookEventEmitter.js'
+import { type CRUDAction } from './webhookEventEmitter.js'
 
-type CRUDAction = 'create' | 'delete' | 'read' | 'update'
+/**
+ * `req.context` flag set on the plugin's own reads so they don't trigger more events.
+ */
+export const SKIP_WEBHOOKS_CONTEXT_KEY = 'payloadPluginWebhooksSkip'
 
-export const emitWebhookEvent = async (
-  action: CRUDAction,
-  collection: CollectionConfig,
-  payload: Payload,
-  data?: unknown,
-  previousData?: unknown,
-  id?: number | string,
-): Promise<void> => {
+export const emitWebhookEvent = async ({
+  id,
+  action,
+  collectionSlug,
+  doc,
+  previousDoc,
+  req,
+}: {
+  action: CRUDAction
+  collectionSlug: string
+  doc?: Record<string, unknown>
+  id?: number | string
+  previousDoc?: Record<string, unknown>
+  req: PayloadRequest
+}): Promise<void> => {
+  if (req.context?.[SKIP_WEBHOOKS_CONTEXT_KEY]) {
+    return
+  }
+
   // Check if webhook should be emitted based on global config
-  const shouldEmit = await shouldEmitWebhook(payload, collection.slug, action)
+  const shouldEmit = await shouldEmitWebhook(req.payload, collectionSlug, action)
 
   if (!shouldEmit) {
     return
   }
 
-  const webhookPayload: WebhookPayload = {
+  await queueWebhookEvent(req, {
     id,
     action,
-    collection: collection.slug,
-    data,
-    previousData,
+    collection: collectionSlug,
+    doc,
+    previousDoc,
     timestamp: new Date().toISOString(),
-  }
-
-  // Emit the webhook event to all connected clients
-  webhookEventEmitter.emitWebhook(webhookPayload)
+  })
 }

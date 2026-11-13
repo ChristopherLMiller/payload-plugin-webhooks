@@ -2,10 +2,6 @@ import type { GlobalConfig } from 'payload'
 
 export const WebhooksGlobal: GlobalConfig = {
   slug: 'webhooks',
-  access: {
-    read: () => true,
-    update: ({ req }) => !!req.user,
-  },
   admin: {
     description: 'Configure which collections and CRUD operations should emit webhook events.',
     group: 'Webhooks',

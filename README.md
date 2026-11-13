@@ -54,7 +54,7 @@ type PayloadPluginWebhooksConfig = {
   access?: {
     /**
      * Control who can read webhook configuration
-     * @default () => true - Anyone can read
+     * @default ({ req }) => !!req.user - Only authenticated users
      */
     read?: Access
 
@@ -265,23 +265,38 @@ while (true) {
 All webhook events follow this structure:
 
 ```ts
+import type { WebhookPayload } from 'payload-plugin-webhooks'
+
 type WebhookPayload = {
   action: 'create' | 'delete' | 'read' | 'update'
   collection: string
-  data?: unknown // The document data
+  data?: unknown // The document, as the subscriber is allowed to read it (not sent for delete)
   id?: number | string // The document ID
-  previousData?: unknown // Previous data (for update operations only)
+  previousData?: unknown // Previous version (update only), limited to fields visible in `data`
   timestamp: string // ISO 8601 timestamp
 }
 ```
+
+### What each subscriber receives
+
+Events are filtered **per subscriber**, using that subscriber's own Payload access control:
+
+- **create / update / read**: the document is re-read as the subscriber (`overrideAccess: false`, `depth: 0`). If the subscriber cannot read the document (collection access, including query-based access like `{ status: { equals: 'published' } }`), the event is not sent. Fields hidden by field-level access or `hidden: true` are removed from `data`, and `previousData` is reduced to the same visible fields.
+- **delete**: the document no longer exists, so it cannot be re-read. Delete events contain only `id`, and are sent only to subscribers whose collection read access is not `false`.
+
+Each event costs one database read per distinct subscribing user.
+
+### Delivery timing
+
+Events raised inside a database transaction are held until it **commits**, and dropped if it rolls back. Subscribers will not see changes that never happened, and a document from an event can be fetched immediately.
 
 ## Security
 
 ### Default Security
 
 - **Stream Authentication**: By default, only requests authenticated by the host app (session, JWT, Payload API keys, Better Auth) can connect
-- **Configuration Access**: By default, only authenticated users can modify webhook configuration
-- **Read Access**: By default, anyone can read webhook configuration (useful for debugging)
+- **Event Filtering**: Subscribers only receive documents and fields their user can read (see [What each subscriber receives](#what-each-subscriber-receives))
+- **Configuration Access**: By default, only authenticated users can read or modify webhook configuration
 
 ### Customizing Security
 
@@ -329,11 +344,19 @@ The `dev` folder contains a test Payload project where you can develop and test 
 
 2. **Hooks Integration**: The plugin automatically adds `afterChange`, `afterDelete`, and `afterRead` hooks to all your collections to emit webhook events.
 
-3. **Event Emitter**: Events are broadcast using a singleton EventEmitter that maintains the stream of webhook events.
+3. **Commit-aware queue**: Events raised inside a transaction are held until the database adapter commits it (and discarded on rollback).
 
-4. **SSE Endpoint**: The `/api/webhooks/stream` endpoint uses Server-Sent Events to push webhook events to connected clients in real-time.
+4. **Event Emitter**: Committed events are broadcast in-process using a singleton EventEmitter.
 
-5. **Authentication**: By default, the stream endpoint accepts any request authenticated by the host app (`req.user` or `payload.auth()`). Override with `streamAuth` if needed.
+5. **SSE Endpoint**: The `/api/webhooks/stream` endpoint uses Server-Sent Events to push events to connected clients, filtered through each subscriber's read access.
+
+6. **Authentication**: By default, the stream endpoint accepts any request authenticated by the host app (`req.user` or `payload.auth()`). Override with `streamAuth` if needed.
+
+### Limitations
+
+- **Single process**: events are broadcast in memory. If you run several Payload instances, a client only receives events from changes handled by the instance it is connected to.
+- **Long-lived connections**: serverless platforms that cap request duration will close the stream. Clients should reconnect (`EventSource` does this automatically).
+- **No replay**: events that happen while a client is disconnected are not redelivered.
 
 ## Use Cases
 

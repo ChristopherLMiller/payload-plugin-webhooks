@@ -69,6 +69,7 @@ export interface Config {
   collections: {
     users: User;
     posts: Post;
+    'internal-notes': InternalNote;
     media: Media;
     'payload-kv': PayloadKv;
     'payload-locked-documents': PayloadLockedDocument;
@@ -79,6 +80,7 @@ export interface Config {
   collectionsSelect: {
     users: UsersSelect<false> | UsersSelect<true>;
     posts: PostsSelect<false> | PostsSelect<true>;
+    'internal-notes': InternalNotesSelect<false> | InternalNotesSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
@@ -129,6 +131,7 @@ export interface UserAuthOperations {
  */
 export interface User {
   id: string;
+  role: 'admin' | 'editor';
   updatedAt: string;
   createdAt: string;
   enableAPIKey?: boolean | null;
@@ -159,6 +162,19 @@ export interface User {
  */
 export interface Post {
   id: string;
+  title?: string | null;
+  status?: ('draft' | 'published') | null;
+  internalNote?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "internal-notes".
+ */
+export interface InternalNote {
+  id: string;
+  body?: string | null;
   updatedAt: string;
   createdAt: string;
 }
@@ -213,6 +229,10 @@ export interface PayloadLockedDocument {
         value: string | Post;
       } | null)
     | ({
+        relationTo: 'internal-notes';
+        value: string | InternalNote;
+      } | null)
+    | ({
         relationTo: 'media';
         value: string | Media;
       } | null);
@@ -263,6 +283,7 @@ export interface PayloadMigration {
  * via the `definition` "users_select".
  */
 export interface UsersSelect<T extends boolean = true> {
+  role?: T;
   updatedAt?: T;
   createdAt?: T;
   enableAPIKey?: T;
@@ -290,6 +311,18 @@ export interface UsersSelect<T extends boolean = true> {
  * via the `definition` "posts_select".
  */
 export interface PostsSelect<T extends boolean = true> {
+  title?: T;
+  status?: T;
+  internalNote?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "internal-notes_select".
+ */
+export interface InternalNotesSelect<T extends boolean = true> {
+  body?: T;
   updatedAt?: T;
   createdAt?: T;
 }
@@ -366,7 +399,7 @@ export interface Webhook {
         /**
          * Select a collection
          */
-        collection: 'posts' | 'media';
+        collection: 'posts' | 'internal-notes' | 'media';
         enabled?: boolean | null;
         /**
          * Select which CRUD operations should emit webhook events.
