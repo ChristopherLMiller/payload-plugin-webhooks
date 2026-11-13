@@ -1,5 +1,11 @@
 # payload-plugin-webhooks
 
+## 1.3.1
+
+### Patch Changes
+
+- be48153: Fix "Send test" returning 400 ("The following field is invalid: Endpoint") on databases with numeric ids (Postgres, SQLite). The test delivery now links to the endpoint using the loaded document's id instead of the string route param.
+
 ## 1.3.0
 
 ### Minor Changes

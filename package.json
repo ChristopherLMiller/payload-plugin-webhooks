@@ -1,6 +1,6 @@
 {
   "name": "payload-plugin-webhooks",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "description": "Add webhooks to your Payload CMS collections",
   "homepage": "https://github.com/ChristopherLMiller/payload-plugin-webhooks#readme",
   "bugs": {
