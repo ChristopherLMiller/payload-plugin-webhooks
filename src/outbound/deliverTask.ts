@@ -28,6 +28,7 @@ export type Endpoint = {
   }
   enabled?: boolean | null
   headers?: { name: string; value: string }[] | null
+  id: number | string
   method?: null | string
   signingSecret?: null | string
   timeoutSeconds?: null | number

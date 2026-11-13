@@ -116,7 +116,9 @@ export const createTestEndpoint = ({
     const delivery = await req.payload.create({
       collection: DELIVERIES_SLUG,
       context: { [SKIP_WEBHOOKS_CONTEXT_KEY]: true },
-      data: { endpoint: id, event: TEST_EVENT, status: 'pending' },
+      // Use the loaded document's id, not the route param: route params are always strings,
+      // which fail relationship validation on databases with numeric ids (Postgres, SQLite).
+      data: { endpoint: endpoint.id, event: TEST_EVENT, status: 'pending' },
       overrideAccess: true,
     })
 
