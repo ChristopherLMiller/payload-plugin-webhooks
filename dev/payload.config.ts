@@ -105,6 +105,10 @@ const buildConfigWithMemoryDB = async () => {
     secret: process.env.PAYLOAD_SECRET || 'test-secret_key',
     sharp,
     typescript: {
+      // Generate types explicitly with `pnpm generate:types`. Auto-generation spawns a
+      // `payload generate:types` child on every getPayload(); that child loads this config,
+      // which starts an in-memory MongoDB that keeps it alive forever.
+      autoGenerate: false,
       outputFile: path.resolve(dirname, 'payload-types.ts'),
     },
   })

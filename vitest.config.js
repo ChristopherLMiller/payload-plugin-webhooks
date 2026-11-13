@@ -17,6 +17,7 @@ export default defineConfig(() => {
       }),
     ],
     test: {
+      globalSetup: ['./dev/vitest.globalSetup.ts'],
       environment: 'node',
       include: ['dev/**/*int.spec.ts', 'src/**/*.test.ts'],
       hookTimeout: 30_000,
