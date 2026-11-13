@@ -1,4 +1,4 @@
-import type { Payload, TypedUser } from 'payload'
+import type { Payload, PayloadRequest, TypedUser } from 'payload'
 
 import { createLocalReq } from 'payload'
 
@@ -68,13 +68,29 @@ export const projectOntoVisible = (previous: unknown, visible: unknown): unknown
 const userKey = (user: Subscriber['user']): string =>
   user ? `${user.collection}:${String(user.id)}` : 'anonymous'
 
-const filterUncached = async (
+/**
+ * Re-read the event's document as `user` (uncached). Pass `transactionID` to read inside
+ * the writer's still-open transaction, e.g. from a collection hook.
+ */
+export const filterEventForUser = async (
   event: WebhookEvent,
-  { payload, user }: Subscriber,
+  {
+    payload,
+    transactionID,
+    user,
+  }: { transactionID?: PayloadRequest['transactionID'] } & Subscriber,
 ): Promise<null | WebhookPayload> => {
   const collection = payload.collections[event.collection]
   if (!collection || event.id === undefined) {
     return null
+  }
+
+  const req = await createLocalReq(
+    { context: { [SKIP_WEBHOOKS_CONTEXT_KEY]: true }, user: user ?? undefined },
+    payload,
+  )
+  if (transactionID) {
+    req.transactionID = transactionID
   }
 
   const base = {
@@ -85,17 +101,12 @@ const filterUncached = async (
   }
 
   if (event.action === 'delete') {
-    // The document no longer exists, so it can't be re-read with the subscriber's access.
-    // Send only the id, and only to subscribers with some read access to the collection.
+    // The document no longer exists, so it can't be re-read with the user's access.
+    // Send only the id, and only to users with some read access to the collection.
     const readAccess = collection.config.access?.read
     if (!readAccess) {
       return user ? base : null
     }
-
-    const req = await createLocalReq(
-      { context: { [SKIP_WEBHOOKS_CONTEXT_KEY]: true }, user: user ?? undefined },
-      payload,
-    )
     const result = await readAccess({ id: event.id, req })
     return result === false ? null : base
   }
@@ -103,13 +114,12 @@ const filterUncached = async (
   const data = await payload.findByID({
     id: event.id,
     collection: event.collection,
-    context: { [SKIP_WEBHOOKS_CONTEXT_KEY]: true },
     depth: 0,
     disableErrors: true,
     draft: true,
     overrideAccess: false,
+    req,
     trash: true,
-    user: user ?? undefined,
   })
 
   if (!data) {
@@ -142,7 +152,7 @@ export const filterEventForSubscriber = async (
   const key = userKey(subscriber.user)
   let result = perUser.get(key)
   if (!result) {
-    result = filterUncached(event, subscriber).catch(() => null)
+    result = filterEventForUser(event, subscriber).catch(() => null)
     perUser.set(key, result)
   }
 

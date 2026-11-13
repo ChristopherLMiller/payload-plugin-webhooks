@@ -3,14 +3,15 @@ import type { Payload, PayloadRequest } from 'payload'
 import { type WebhookEvent, webhookEventEmitter } from './webhookEventEmitter.js'
 
 type TransactionID = number | string
+type Callback = () => Promise<void> | void
 
 /**
- * Events raised inside a database transaction, held until that transaction commits.
- * Collection `afterChange` / `afterDelete` hooks run *before* Payload commits, so emitting
+ * Work deferred until a database transaction commits.
+ * Collection `afterChange` / `afterDelete` hooks run *before* Payload commits, so acting
  * from the hook directly would announce changes that may still be rolled back, and
- * subscribers re-reading the document might not see it yet.
+ * anything reading the document from outside the transaction might not see it yet.
  */
-const pendingByTransaction = new Map<TransactionID, WebhookEvent[]>()
+const pendingByTransaction = new Map<TransactionID, Callback[]>()
 
 const patchedAdapters = new WeakSet<object>()
 
@@ -21,31 +22,45 @@ const resolveTransactionID = async (
   return resolved === undefined || resolved === null ? null : resolved
 }
 
+const runSafely = async (callback: Callback) => {
+  try {
+    await callback()
+  } catch (_error) {
+    // After-commit work must never fail the operation that already committed.
+  }
+}
+
 /**
- * Emit now if the request has no transaction, otherwise defer until it commits.
+ * Run `callback` once the request's transaction commits, or right away if it has none.
+ * Dropped if the transaction rolls back.
  */
-export const queueWebhookEvent = async (
-  req: PayloadRequest,
-  event: WebhookEvent,
-): Promise<void> => {
+export const afterCommit = async (req: PayloadRequest, callback: Callback): Promise<void> => {
   const transactionID = await resolveTransactionID(req.transactionID)
 
   if (transactionID === null) {
-    webhookEventEmitter.emitWebhook(event)
+    await runSafely(callback)
     return
   }
 
   const queue = pendingByTransaction.get(transactionID)
   if (queue) {
-    queue.push(event)
+    queue.push(callback)
   } else {
-    pendingByTransaction.set(transactionID, [event])
+    pendingByTransaction.set(transactionID, [callback])
   }
 }
 
 /**
- * Wrap the database adapter's commit/rollback so queued events are flushed after a
- * successful commit and discarded on rollback. Payload has no public after-commit hook.
+ * Emit a stream event now if the request has no transaction, otherwise after it commits.
+ */
+export const queueWebhookEvent = (req: PayloadRequest, event: WebhookEvent): Promise<void> =>
+  afterCommit(req, () => {
+    webhookEventEmitter.emitWebhook(event)
+  })
+
+/**
+ * Wrap the database adapter's commit/rollback so deferred work runs after a successful
+ * commit and is discarded on rollback. Payload has no public after-commit hook.
  */
 export const installTransactionHooks = (payload: Payload): void => {
   const db = payload.db
@@ -67,9 +82,11 @@ export const installTransactionHooks = (payload: Payload): void => {
         return
       }
 
-      const events = pendingByTransaction.get(transactionID)
+      const callbacks = pendingByTransaction.get(transactionID)
       pendingByTransaction.delete(transactionID)
-      events?.forEach((event) => webhookEventEmitter.emitWebhook(event))
+      for (const callback of callbacks ?? []) {
+        await runSafely(callback)
+      }
     }
   }
 

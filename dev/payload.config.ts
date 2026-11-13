@@ -39,6 +39,7 @@ const buildConfigWithMemoryDB = async () => {
     collections: [
       {
         slug: 'users',
+        admin: { useAsTitle: 'email' },
         auth: {
           useAPIKey: true,
         },

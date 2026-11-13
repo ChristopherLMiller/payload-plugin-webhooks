@@ -71,7 +71,10 @@ export interface Config {
     posts: Post;
     'internal-notes': InternalNote;
     media: Media;
+    'webhook-endpoints': WebhookEndpoint;
+    'webhook-deliveries': WebhookDelivery;
     'payload-kv': PayloadKv;
+    'payload-jobs': PayloadJob;
     'payload-locked-documents': PayloadLockedDocument;
     'payload-preferences': PayloadPreference;
     'payload-migrations': PayloadMigration;
@@ -82,7 +85,10 @@ export interface Config {
     posts: PostsSelect<false> | PostsSelect<true>;
     'internal-notes': InternalNotesSelect<false> | InternalNotesSelect<true>;
     media: MediaSelect<false> | MediaSelect<true>;
+    'webhook-endpoints': WebhookEndpointsSelect<false> | WebhookEndpointsSelect<true>;
+    'webhook-deliveries': WebhookDeliveriesSelect<false> | WebhookDeliveriesSelect<true>;
     'payload-kv': PayloadKvSelect<false> | PayloadKvSelect<true>;
+    'payload-jobs': PayloadJobsSelect<false> | PayloadJobsSelect<true>;
     'payload-locked-documents': PayloadLockedDocumentsSelect<false> | PayloadLockedDocumentsSelect<true>;
     'payload-preferences': PayloadPreferencesSelect<false> | PayloadPreferencesSelect<true>;
     'payload-migrations': PayloadMigrationsSelect<false> | PayloadMigrationsSelect<true>;
@@ -103,7 +109,13 @@ export interface Config {
   };
   user: User;
   jobs: {
-    tasks: unknown;
+    tasks: {
+      deliverWebhook: TaskDeliverWebhook;
+      inline: {
+        input: unknown;
+        output: unknown;
+      };
+    };
     workflows: unknown;
   };
 }
@@ -197,6 +209,116 @@ export interface Media {
   focalY?: number | null;
 }
 /**
+ * Send an HTTP request to another service (for example a Home Assistant webhook) when documents change. Each change is delivered in the background with automatic retries; see Webhook Deliveries for results.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-endpoints".
+ */
+export interface WebhookEndpoint {
+  id: string;
+  /**
+   * A label for your own reference, e.g. "Home Assistant".
+   */
+  name: string;
+  enabled?: boolean | null;
+  method: 'POST' | 'PUT' | 'PATCH';
+  /**
+   * The full address to call. For a Home Assistant webhook trigger: https://<your-ha>/api/webhook/<webhook_id>
+   */
+  url: string;
+  /**
+   * Which changes send a request to this URL.
+   */
+  events: {
+    /**
+     * Changes to documents in these collections.
+     */
+    collections: ('posts' | 'internal-notes' | 'media')[];
+    /**
+     * Which kinds of change.
+     */
+    operations: ('create' | 'update' | 'delete')[];
+  };
+  /**
+   * Documents are read with this user’s access before they are sent, so the receiving service only gets what this user may read. Create a dedicated user with limited access for external services. Delete events only include the document id.
+   */
+  runAs: string | User;
+  /**
+   * Include the document (and previous version, for updates) in the request body. Turn off to send only the collection, action and id.
+   */
+  includeDocument?: boolean | null;
+  timeoutSeconds?: number | null;
+  /**
+   * How this request proves itself to the receiving service.
+   */
+  authentication: {
+    /**
+     * Home Assistant webhook triggers need none (the webhook id in the URL is the secret). Home Assistant’s REST API uses a Bearer long-lived access token.
+     */
+    type: 'none' | 'bearer' | 'basic' | 'header';
+    /**
+     * Sent as "Authorization: Bearer <token>". Stored encrypted; shown masked after saving.
+     */
+    token?: string | null;
+    username?: string | null;
+    /**
+     * Stored encrypted; shown masked after saving.
+     */
+    password?: string | null;
+    headerName?: string | null;
+    /**
+     * Stored encrypted; shown masked after saving.
+     */
+    headerValue?: string | null;
+  };
+  /**
+   * Optional. When set, each request carries a "X-Webhook-Signature: t=<unix time>,v1=<hex>" header, where v1 is the HMAC-SHA256 of "<t>.<raw body>" with this secret, so the receiver can verify the request came from here. Stored encrypted; shown masked after saving.
+   */
+  signingSecret?: string | null;
+  /**
+   * Extra headers sent with every request. Not encrypted; use Authentication for secrets. Requests also include "X-Webhook-Event" (e.g. posts.update) and "X-Webhook-Delivery" (a unique id per delivery).
+   */
+  headers?:
+    | {
+        name: string;
+        value: string;
+        id?: string | null;
+      }[]
+    | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
+ * One entry per webhook request, with the outcome of the latest attempt. Failed deliveries are retried automatically with increasing delays. Request bodies are not stored.
+ *
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-deliveries".
+ */
+export interface WebhookDelivery {
+  id: string;
+  endpoint?: (string | null) | WebhookEndpoint;
+  /**
+   * Collection and action, e.g. posts.update.
+   */
+  event?: string | null;
+  documentId?: string | null;
+  status?: ('pending' | 'success' | 'failed' | 'skipped') | null;
+  attempts?: number | null;
+  responseStatus?: number | null;
+  durationMs?: number | null;
+  lastAttemptAt?: string | null;
+  /**
+   * Why the latest attempt failed or was skipped.
+   */
+  error?: string | null;
+  /**
+   * First 2 KB of the response.
+   */
+  responseBody?: string | null;
+  updatedAt: string;
+  createdAt: string;
+}
+/**
  * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv".
  */
@@ -212,6 +334,98 @@ export interface PayloadKv {
     | number
     | boolean
     | null;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-jobs".
+ */
+export interface PayloadJob {
+  id: string;
+  /**
+   * Input data provided to the job
+   */
+  input?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  taskStatus?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  completedAt?: string | null;
+  totalTried?: number | null;
+  /**
+   * If hasError is true this job will not be retried
+   */
+  hasError?: boolean | null;
+  /**
+   * If hasError is true, this is the error that caused it
+   */
+  error?:
+    | {
+        [k: string]: unknown;
+      }
+    | unknown[]
+    | string
+    | number
+    | boolean
+    | null;
+  /**
+   * Task execution log
+   */
+  log?:
+    | {
+        executedAt: string;
+        completedAt: string;
+        taskSlug: 'inline' | 'deliverWebhook';
+        taskID: string;
+        input?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        output?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        state: 'failed' | 'succeeded';
+        error?:
+          | {
+              [k: string]: unknown;
+            }
+          | unknown[]
+          | string
+          | number
+          | boolean
+          | null;
+        id?: string | null;
+      }[]
+    | null;
+  taskSlug?: ('inline' | 'deliverWebhook') | null;
+  queue?: string | null;
+  waitUntil?: string | null;
+  processing?: boolean | null;
+  updatedAt: string;
+  createdAt: string;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -235,6 +449,14 @@ export interface PayloadLockedDocument {
     | ({
         relationTo: 'media';
         value: string | Media;
+      } | null)
+    | ({
+        relationTo: 'webhook-endpoints';
+        value: string | WebhookEndpoint;
+      } | null)
+    | ({
+        relationTo: 'webhook-deliveries';
+        value: string | WebhookDelivery;
       } | null);
   globalSlug?: string | null;
   user: {
@@ -345,11 +567,99 @@ export interface MediaSelect<T extends boolean = true> {
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-endpoints_select".
+ */
+export interface WebhookEndpointsSelect<T extends boolean = true> {
+  name?: T;
+  enabled?: T;
+  method?: T;
+  url?: T;
+  events?:
+    | T
+    | {
+        collections?: T;
+        operations?: T;
+      };
+  runAs?: T;
+  includeDocument?: T;
+  timeoutSeconds?: T;
+  authentication?:
+    | T
+    | {
+        type?: T;
+        token?: T;
+        username?: T;
+        password?: T;
+        headerName?: T;
+        headerValue?: T;
+      };
+  signingSecret?: T;
+  headers?:
+    | T
+    | {
+        name?: T;
+        value?: T;
+        id?: T;
+      };
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "webhook-deliveries_select".
+ */
+export interface WebhookDeliveriesSelect<T extends boolean = true> {
+  endpoint?: T;
+  event?: T;
+  documentId?: T;
+  status?: T;
+  attempts?: T;
+  responseStatus?: T;
+  durationMs?: T;
+  lastAttemptAt?: T;
+  error?: T;
+  responseBody?: T;
+  updatedAt?: T;
+  createdAt?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
  * via the `definition` "payload-kv_select".
  */
 export interface PayloadKvSelect<T extends boolean = true> {
   key?: T;
   data?: T;
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "payload-jobs_select".
+ */
+export interface PayloadJobsSelect<T extends boolean = true> {
+  input?: T;
+  taskStatus?: T;
+  completedAt?: T;
+  totalTried?: T;
+  hasError?: T;
+  error?: T;
+  log?:
+    | T
+    | {
+        executedAt?: T;
+        completedAt?: T;
+        taskSlug?: T;
+        taskID?: T;
+        input?: T;
+        output?: T;
+        state?: T;
+        error?: T;
+        id?: T;
+      };
+  taskSlug?: T;
+  queue?: T;
+  waitUntil?: T;
+  processing?: T;
+  updatedAt?: T;
+  createdAt?: T;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema
@@ -449,6 +759,42 @@ export interface CollectionsWidget {
     [k: string]: unknown;
   };
   width: 'full';
+}
+/**
+ * This interface was referenced by `Config`'s JSON-Schema
+ * via the `definition` "TaskDeliverWebhook".
+ */
+export interface TaskDeliverWebhook {
+  input: {
+    endpointId:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+    deliveryId:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+    body:
+      | {
+          [k: string]: unknown;
+        }
+      | unknown[]
+      | string
+      | number
+      | boolean
+      | null;
+  };
+  output?: unknown;
 }
 /**
  * This interface was referenced by `Config`'s JSON-Schema

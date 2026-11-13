@@ -7,9 +7,55 @@ import { WebhooksGlobal } from './globals/webhooks.js'
 import { installTransactionHooks } from './hooks/transactionQueue.js'
 import { invalidateWebhookConfigCache } from './hooks/webhookConfig.js'
 import { emitWebhookEvent } from './hooks/webhookHandler.js'
+import { WEBHOOKS_QUEUE } from './outbound/constants.js'
+import { createDeliveriesCollection } from './outbound/deliveriesCollection.js'
+import { createDeliverTask } from './outbound/deliverTask.js'
+import { createEndpointsCollection } from './outbound/endpointsCollection.js'
+import { enqueueDeliveries } from './outbound/enqueueDeliveries.js'
 
 export type { StreamAuth } from './auth/defaultStreamAuth.js'
 export type { WebhookPayload } from './hooks/webhookEventEmitter.js'
+export {
+  DELIVERIES_SLUG,
+  DELIVERY_HEADER,
+  ENDPOINTS_SLUG,
+  EVENT_HEADER,
+  SIGNATURE_HEADER,
+  WEBHOOKS_QUEUE,
+} from './outbound/constants.js'
+export { signBody } from './outbound/deliverTask.js'
+
+export type OutboundWebhooksConfig = {
+  /**
+   * Who can manage webhook endpoints and view the delivery log.
+   * @default ({ req }) => !!req.user - Only authenticated users
+   */
+  access?: Access
+  /**
+   * Who may set an endpoint's "Run as" user to someone other than themselves.
+   * Everyone else can only run endpoints as themselves. Local API writes are always allowed.
+   * @default () => false
+   */
+  assignRunAs?: Access
+  /**
+   * Run queued deliveries (retries) on a schedule in this process. Pass a cron string to
+   * change the schedule, or `false` on serverless hosts and call
+   * `/api/payload-jobs/run?queue=webhooks` from an external cron instead.
+   * The first attempt is always made right after the change commits.
+   * @default '* * * * *' (every minute)
+   */
+  autoRun?: boolean | string
+  /**
+   * Delete delivery log entries older than this many days. `0` keeps them forever.
+   * @default 30
+   */
+  deliveryRetentionDays?: number
+  /**
+   * Retry attempts after a failed delivery, with exponential backoff starting at 30s.
+   * @default 5
+   */
+  retries?: number
+}
 
 export type PayloadPluginWebhooksConfig = {
   /**
@@ -31,6 +77,12 @@ export type PayloadPluginWebhooksConfig = {
    * Disable the plugin
    */
   disabled?: boolean
+  /**
+   * Outbound webhooks: HTTP requests sent to other services when documents change,
+   * configured in the "Webhook Endpoints" collection. Pass `false` to disable.
+   * @default {}
+   */
+  outbound?: false | OutboundWebhooksConfig
   /**
    * Custom authentication check for the webhook stream endpoint.
    * If omitted, the stream accepts any request already authenticated by the host app:
@@ -71,6 +123,15 @@ export const payloadPluginWebhooks =
       return config
     }
 
+    const outbound = pluginOptions.outbound === false ? null : (pluginOptions.outbound ?? {})
+
+    // The admin user collection is not offered as a webhook source; it is the "Run as" target.
+    const adminUserSlug =
+      config.admin?.user ?? config.collections?.find((col) => col.auth)?.slug ?? 'users'
+    const availableCollections = (config.collections ?? [])
+      .filter((col) => col.slug !== adminUserSlug)
+      .map((col) => ({ label: getSingularLabel(col), value: col.slug }))
+
     // Add webhook hooks to all collections for CRUD operations
     for (const collection of config.collections ?? []) {
       const hooks: Hooks = collection.hooks ?? {}
@@ -79,14 +140,30 @@ export const payloadPluginWebhooks =
       hooks.afterChange = [
         ...toArray(hooks.afterChange),
         async ({ doc, operation, previousDoc, req }) => {
+          const action = operation === 'create' ? 'create' : 'update'
+          const previous = action === 'create' ? undefined : previousDoc || undefined
           await emitWebhookEvent({
             id: doc.id,
-            action: operation === 'create' ? 'create' : 'update',
+            action,
             collectionSlug: collection.slug,
             doc,
-            previousDoc: operation === 'create' ? undefined : previousDoc || undefined,
+            previousDoc: previous,
             req,
           })
+          if (outbound) {
+            await enqueueDeliveries({
+              event: {
+                id: doc.id,
+                action,
+                collection: collection.slug,
+                doc,
+                previousDoc: previous,
+                timestamp: new Date().toISOString(),
+              },
+              req,
+              runAsCollection: adminUserSlug,
+            })
+          }
         },
       ]
 
@@ -100,6 +177,18 @@ export const payloadPluginWebhooks =
             doc,
             req,
           })
+          if (outbound) {
+            await enqueueDeliveries({
+              event: {
+                id: doc?.id ?? id,
+                action: 'delete',
+                collection: collection.slug,
+                timestamp: new Date().toISOString(),
+              },
+              req,
+              runAsCollection: adminUserSlug,
+            })
+          }
         },
       ]
 
@@ -117,12 +206,6 @@ export const payloadPluginWebhooks =
         },
       ]
     }
-
-    // The admin user collection is not offered as a webhook source.
-    const adminUserSlug = config.admin?.user ?? 'users'
-    const availableCollections = (config.collections ?? [])
-      .filter((col) => col.slug !== adminUserSlug)
-      .map((col) => ({ label: getSingularLabel(col), value: col.slug }))
 
     const webhooksGlobal: GlobalConfig = {
       ...WebhooksGlobal,
@@ -165,6 +248,40 @@ export const payloadPluginWebhooks =
         path: '/webhooks/stream',
       },
     ]
+
+    if (outbound) {
+      const manage = outbound.access ?? isAuthenticated
+      config.collections = [
+        ...(config.collections ?? []),
+        createEndpointsCollection({
+          access: manage,
+          assignRunAs: outbound.assignRunAs ?? (() => false),
+          collectionOptions: availableCollections,
+          runAsCollection: adminUserSlug,
+        }),
+        createDeliveriesCollection({ access: manage }),
+      ]
+
+      const autoRun = outbound.autoRun ?? true
+      const cron = typeof autoRun === 'string' ? autoRun : '* * * * *'
+      const existingAutoRun = config.jobs?.autoRun
+      const ownAutoRun = autoRun ? [{ cron, limit: 10, queue: WEBHOOKS_QUEUE }] : []
+
+      config.jobs = {
+        ...config.jobs,
+        autoRun:
+          typeof existingAutoRun === 'function'
+            ? async (payload) => [...(await existingAutoRun(payload)), ...ownAutoRun]
+            : [...(existingAutoRun ?? []), ...ownAutoRun],
+        tasks: [
+          ...(config.jobs?.tasks ?? []),
+          createDeliverTask({
+            retainDays: outbound.deliveryRetentionDays ?? 30,
+            retries: outbound.retries ?? 5,
+          }),
+        ],
+      }
+    }
 
     // Hold events raised inside a transaction until it commits. Installed before the host
     // app's own onInit so seed scripts and other startup writes are covered too.
