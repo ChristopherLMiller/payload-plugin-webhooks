@@ -2,6 +2,14 @@
   "name": "payload-plugin-webhooks",
   "version": "1.2.0",
   "description": "Add webhooks to your Payload CMS collections",
+  "homepage": "https://github.com/ChristopherLMiller/payload-plugin-webhooks#readme",
+  "bugs": {
+    "url": "https://github.com/ChristopherLMiller/payload-plugin-webhooks/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChristopherLMiller/payload-plugin-webhooks.git"
+  },
   "license": "MIT",
   "type": "module",
   "exports": {
@@ -87,6 +95,7 @@
   "peerDependencies": {
     "payload": "^3.37.0"
   },
+  "packageManager": "pnpm@10.17.0",
   "engines": {
     "node": "^18.20.2 || >=20.9.0",
     "pnpm": "^9 || ^10"

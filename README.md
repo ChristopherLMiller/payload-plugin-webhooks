@@ -523,14 +523,16 @@ When making changes:
 
 ### Releasing
 
-To release a new version:
+Releases are automated by [`.github/workflows/release.yml`](.github/workflows/release.yml). Every PR must pass CI (lint, typecheck, build, integration and e2e tests).
 
-1. Update versions and generate changelog:
-   ```bash
-   pnpm version
-   ```
-2. Review the changes and commit
-3. Publish to npm:
-   ```bash
-   pnpm release
-   ```
+1. Add a changeset to your PR with `pnpm changeset` (choose patch, minor or major and describe the change).
+2. Merge the PR into `main`.
+
+The Release workflow then runs CI again and, if the merge contains changesets:
+
+- bumps the version and updates `CHANGELOG.md`,
+- commits `Release vX.Y.Z` and tags `vX.Y.Z` on `main`,
+- publishes to npm with [provenance](https://docs.npmjs.com/generating-provenance-statements) using [trusted publishing](https://docs.npmjs.com/trusted-publishers) (no npm token is stored in GitHub),
+- creates a GitHub release with the changelog entry.
+
+Merges without changesets don't release anything. If a run fails part-way (for example npm is down), re-run it from **Actions → Release → Run workflow**: it skips whatever already succeeded.

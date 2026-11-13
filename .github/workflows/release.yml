@@ -1,0 +1,117 @@
+name: Release
+
+# On every push to main:
+#   1. Run CI.
+#   2. If there are changesets: bump the version, update CHANGELOG.md, commit
+#      "Release vX.Y.Z", tag it, and push both to main.
+#   3. If that version isn't on npm yet: build and publish it (trusted publishing, with provenance).
+#   4. If there's no GitHub release for it yet: create one from the CHANGELOG entry.
+#
+# Steps 3 and 4 check before acting, so if anything fails part-way, re-run this workflow
+# (Actions → Release → Run workflow) and it picks up where it stopped.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # push the version commit and tag, create the GitHub release
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    env:
+      PACKAGE: payload-plugin-webhooks
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+
+      - name: Use an npm that supports trusted publishing
+        run: npm install -g npm@^11.5.1
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Version (apply changesets)
+        id: version
+        run: |
+          pending=$(find .changeset -name '*.md' ! -name 'README.md' | wc -l)
+          if [ "$pending" -gt 0 ]; then
+            pnpm changeset version
+            version=$(node -p "require('./package.json').version")
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "Release v$version"
+            git tag "v$version"
+            # Atomic: either both the commit and the tag land on main, or neither does.
+            git push --atomic origin HEAD:main "v$version"
+            echo "Released changesets as v$version"
+          else
+            echo "No changesets to release."
+          fi
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: Check npm
+        id: npm
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if npm view "$PACKAGE@$VERSION" version > /dev/null 2>&1; then
+            echo "$PACKAGE@$VERSION is already on npm."
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build and publish to npm
+        if: steps.npm.outputs.published == 'false'
+        run: |
+          pnpm build
+          # pnpm pack applies "publishConfig" (exports → dist/); plain `npm publish` would not.
+          pnpm pack --pack-destination ./pack
+          npm publish ./pack/*.tgz --provenance --access public
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" > /dev/null 2>&1; then
+            echo "Release $tag already exists."
+            exit 0
+          fi
+          if ! git rev-parse -q --verify "refs/tags/$tag" > /dev/null; then
+            echo "Tag $tag does not exist; nothing to release."
+            exit 0
+          fi
+          awk -v heading="## $VERSION" '
+            $0 == heading { found = 1; next }
+            /^## / && found { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          echo "" >> release-notes.md
+          echo "**npm:** https://www.npmjs.com/package/$PACKAGE/v/$VERSION" >> release-notes.md
+          gh release create "$tag" --title "$tag" --notes-file release-notes.md --verify-tag
